@@ -23,14 +23,28 @@ module.exports = {
       boxShadow: {
         soft: "0 10px 30px rgba(0,0,0,.35)"
       },
+
       keyframes: {
         shimmer: {
           "0%": { transform: "translateX(-100%)" },
           "100%": { transform: "translateX(100%)" }
+        },
+        "gradient-x": {
+          "0%, 100%": {
+            "background-size": "200% 200%",
+            "background-position": "left center"
+          },
+          "50%": {
+            "background-size": "200% 200%",
+            "background-position": "right center"
+          }
         }
       },
+
       animation: {
-        shimmer: "shimmer 1.4s ease-in-out infinite"
+        shimmer: "shimmer 1.4s ease-in-out infinite",
+        "pulse-slow": "pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        "gradient-x": "gradient-x 3s ease infinite"
       }
     }
   },

@@ -1,10 +1,10 @@
-import { ok, fail } from "../../utils/http.js";
-import { parseBody } from "../../utils/validation.js";
+// CORREÇÃO AQUI: "../utils" (apenas um nível)
+import { ok, fail } from "../utils/http.js"; 
+import { parseBody } from "../utils/validation.js";
 import { z } from "zod";
-import { openai } from "../services/openai.js"; // Importa direto, sem wrapper bugado
+import { openai } from "../services/openai.js";
 import { requireRole } from "../middlewares/requireRole.js";
 
-// --- Schemas de Entrada ---
 const GenerateProjectPlanBody = z.object({
   workspaceId: z.string().min(10),
   projectId: z.string().min(10).optional(),
@@ -20,55 +20,13 @@ const ImplementationPlanBody = z.object({
   context: z.string().optional()
 });
 
-// --- Helpers de Banco de Dados ---
 async function ensureWorkspaceAccess(app, workspaceId, userId) {
   return app.prisma.workspaceMember.findUnique({
     where: { workspaceId_userId: { workspaceId, userId } }
   });
 }
 
-// Salva o resultado no banco para histórico
-async function persistAI(app, { workspaceId, userId, kind, title, content, meta }) {
-  try {
-    // 1. Cria o Insight
-    const insight = await app.prisma.aiInsight.create({
-      data: {
-        workspaceId,
-        kind,
-        title,
-        content: content || {} // Garante que não seja null
-      }
-    });
-
-    // 2. Cria a Mensagem (Log)
-    await app.prisma.aiMessage.create({
-      data: {
-        workspaceId,
-        userId,
-        role: "assistant",
-        content: JSON.stringify({ kind, insightId: insight.id, meta: meta || null })
-      }
-    });
-
-    // 3. Cria Suggestion (para aparecer em listas rápidas se necessário)
-    if (content) {
-      await app.prisma.aiSuggestion.create({
-        data: {
-          workspaceId,
-          type: kind === "project_plan" ? "plan" : "implementation",
-          payload: content
-        }
-      });
-    }
-
-    return insight;
-  } catch (e) {
-    console.error("Erro ao persistir AI:", e);
-    return { id: "temp-id" }; // Não trava o fluxo se o banco falhar
-  }
-}
-
-// Função segura para limpar JSON vindo da IA (remove markdown)
+// Helper para limpar JSON (Markdown strips)
 function cleanAndParse(text) {
   try {
     const clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
@@ -79,9 +37,44 @@ function cleanAndParse(text) {
   }
 }
 
-// --- ROTAS ---
+async function persistAI(app, { workspaceId, userId, kind, title, content, meta }) {
+  try {
+    const insight = await app.prisma.aiInsight.create({
+      data: {
+        workspaceId,
+        kind,
+        title,
+        content: content || {}
+      }
+    });
+
+    await app.prisma.aiMessage.create({
+      data: {
+        workspaceId,
+        userId,
+        role: "assistant",
+        content: JSON.stringify({ kind, insightId: insight.id, meta: meta || null })
+      }
+    });
+
+    if (content) {
+      await app.prisma.aiSuggestion.create({
+        data: {
+          workspaceId,
+          type: kind === "project_plan" ? "plan" : "implementation",
+          payload: content
+        }
+      });
+    }
+    return insight;
+  } catch (e) {
+    console.error("Erro ao persistir AI:", e);
+    return { id: "temp-id" };
+  }
+}
+
 export async function aiRoutes(app) {
-  // 1. PLANO DE PROJETO (Dashboard de Projeto)
+  // 1. PLANO DE PROJETO
   app.post("/ai/generate-project-plan", { preHandler: requireRole("member") }, async (request, reply) => {
     const parsed = parseBody(GenerateProjectPlanBody, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
@@ -93,13 +86,12 @@ export async function aiRoutes(app) {
     if (!member) return fail(reply, 403, { message: "Sem acesso." });
 
     try {
-      // Chamada Direta e Robusta à OpenAI
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: `Você é um Gerente de Projetos Expert. Retorne APENAS um JSON válido.
+            content: `Atue como um Gerente de Projetos Expert. Retorne APENAS um JSON válido.
             Estrutura Obrigatória:
             {
               "risks": [{ "risk": "Titulo", "mitigation": "Ação" }],
@@ -109,11 +101,10 @@ export async function aiRoutes(app) {
           },
           {
             role: "user",
-            content: `Projeto: ${projectName}. Descrição: ${projectDescription || "N/A"}. Contexto Extra: ${context || ""}`
+            content: `Projeto: ${projectName}. Descrição: ${projectDescription || "N/A"}. Contexto: ${context || ""}`
           }
         ],
-        response_format: { type: "json_object" }, // <--- O PULO DO GATO
-        temperature: 0.7,
+        response_format: { type: "json_object" }
       });
 
       const raw = completion.choices[0].message.content;
@@ -121,7 +112,6 @@ export async function aiRoutes(app) {
 
       if (!json) return fail(reply, 500, { message: "IA retornou dados inválidos", raw });
 
-      // Salva no banco
       const insight = await persistAI(app, {
         workspaceId,
         userId,
@@ -139,7 +129,7 @@ export async function aiRoutes(app) {
     }
   });
 
-  // 2. PLANO DE TAREFA (Dentro do Drawer da Tarefa)
+  // 2. PLANO DE TAREFA
   app.post("/ai/feature-implementation-plan", { preHandler: requireRole("member") }, async (request, reply) => {
     const parsed = parseBody(ImplementationPlanBody, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
@@ -164,7 +154,7 @@ export async function aiRoutes(app) {
           },
           {
             role: "user",
-            content: `Feature/Tarefa: ${feature}. Contexto: ${context || ""}`
+            content: `Feature: ${feature}. Contexto: ${context || ""}`
           }
         ],
         response_format: { type: "json_object" }

@@ -1,7 +1,7 @@
 import { audit } from "../services/audit.js";
 import { enqueueWhatsappTemplate, makeMessageKey } from "../services/whatsappQueue.js";
 import { isWithinQuietHours } from "../services/time.js";
-import { openaiJSON } from "../services/openai.js";
+import { openai } from "../services/openai.js";
 import { SYSTEM_PROMPT } from "../ai/prompts.js";
 
 import { ruleAtRisk } from "./rules.at_risk.js";
@@ -100,7 +100,7 @@ Formato JSON:
 }
 `.trim();
 
-  const resp = await openaiJSON({ system: SYSTEM_PROMPT, user: prompt });
+  const resp = await openai({ system: SYSTEM_PROMPT, user: prompt });
   if (!resp.ok) return { ok: false, error: resp.error };
 
   // salva insight
