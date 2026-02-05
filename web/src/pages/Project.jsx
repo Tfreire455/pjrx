@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { Rocket } from "lucide-react";
 
 import { useProject } from "../hooks/useProject";
 import { useProjectTasks } from "../hooks/useProjectTasks";
@@ -10,7 +9,6 @@ import { useTask } from "../hooks/useTask";
 import { useUpdateTaskStatus } from "../hooks/useUpdateTaskStatus";
 
 import { ProjectHeader } from "../components/projects/ProjectHeader";
-import { ProjectTabs } from "../components/projects/ProjectTabs";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
@@ -21,30 +19,20 @@ import { KanbanBoard } from "../components/kanban/KanbanBoard";
 import { SprintBoard } from "../components/sprints/SprintBoard";
 import { AiProjectPanel } from "../components/projects/AiProjectPanel";
 
-// Função auxiliar para extrair o array de tarefas com segurança
+// --- CORREÇÃO 1: Extração Robusta de Dados ---
+function extractProject(res) {
+  // Tenta pegar project dentro de data.project ou data.data.project
+  return res?.data?.project || res?.project || res?.data || null;
+}
+
 function extractTasks(res) {
   if (!res) return [];
-  
-  // Caminho 1: data.data.tasks (Padrão mais comum do seu backend)
-  if (res.data && res.data.tasks && Array.isArray(res.data.tasks)) {
-    return res.data.tasks;
-  }
-
-  // Caminho 2: data.tasks (Se o apiFetch já tiver desembrulhado um nível)
-  if (res.tasks && Array.isArray(res.tasks)) {
-    return res.tasks;
-  }
-
-  // Caminho 3: O próprio res é um array
   if (Array.isArray(res)) return res;
-
-  // Fallback
+  if (res.data && Array.isArray(res.data.tasks)) return res.data.tasks;
+  if (res.tasks && Array.isArray(res.tasks)) return res.tasks;
   return [];
 }
-
-function parseData(q) {
-  return q?.data?.data || q?.data || null; // Para o objeto do projeto
-}
+// ---------------------------------------------
 
 export function Project() {
   const nav = useNavigate();
@@ -69,12 +57,14 @@ export function Project() {
     updateStatus.mutate({ taskId, status });
   }
 
-  const project = parseData(projectQ);
-  
-  // CORREÇÃO AQUI: Uso da função segura para extrair o array
+  // Uso das funções corrigidas
+  const project = useMemo(() => extractProject(projectQ.data), [projectQ.data]);
   const tasks = useMemo(() => extractTasks(tasksQ.data), [tasksQ.data]);
   
   const openDrawer = Boolean(taskId);
+
+  // Debug: Se quiser ver no console o que está chegando
+  console.log("Projeto Carregado:", project);
 
   return (
     <div className="space-y-4">
@@ -84,35 +74,42 @@ export function Project() {
         <ProjectHeader project={project} />
       )}
 
+      {/* --- CORREÇÃO 2: Tabs usando 'value' correto --- */}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger tabValue="kanban">Kanban</TabsTrigger>
-          <TabsTrigger tabValue="list">Lista</TabsTrigger>
-          <TabsTrigger tabValue="sprints">Sprints</TabsTrigger>
-          <TabsTrigger tabValue="ai">IA Copilot</TabsTrigger>
+          <TabsTrigger value="kanban">Kanban</TabsTrigger>
+          <TabsTrigger value="list">Lista</TabsTrigger>
+          <TabsTrigger value="sprints">Sprints</TabsTrigger>
+          <TabsTrigger value="ai">IA Copilot</TabsTrigger>
         </TabsList>
 
         <AnimatePresence mode="wait">
-          <motion.div key={tab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18 }} className="mt-4">
+          <motion.div 
+            key={tab} 
+            initial={{ opacity: 0, y: 5 }} 
+            animate={{ opacity: 1, y: 0 }} 
+            exit={{ opacity: 0, y: -5 }} 
+            transition={{ duration: 0.15 }}
+            className="mt-4"
+          >
             
-            <TabsContent value={tab} tabValue="kanban">
-              <Card>
-                <CardHeader><CardTitle>Quadro</CardTitle></CardHeader>
-                <CardContent>
+            <TabsContent value="kanban">
+              <Card className="border-none bg-transparent shadow-none p-0">
+                <CardContent className="p-0">
                   {tasksQ.isLoading ? <Skeleton className="h-72 w-full" /> : <KanbanBoard tasks={tasks} onOpenTask={openTask} onMoveTask={moveTask} />}
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value={tab} tabValue="list">
+            <TabsContent value="list">
               <Card>
                 <CardHeader><CardTitle>Lista de Tarefas</CardTitle></CardHeader>
                 <CardContent className="space-y-2">
                   {tasks.length > 0 ? (
                     tasks.map((t) => (
-                      <div key={t.id} onClick={() => openTask(t.id)} className="p-3 border border-white/10 rounded-lg hover:bg-white/5 cursor-pointer flex justify-between items-center">
-                        <span>{t.title}</span>
-                        <Badge>{t.status}</Badge>
+                      <div key={t.id} onClick={() => openTask(t.id)} className="p-3 border border-white/10 rounded-lg hover:bg-white/5 cursor-pointer flex justify-between items-center transition">
+                        <span className="font-medium text-text">{t.title}</span>
+                        <Badge tone={t.status === 'done' ? 'success' : 'secondary'}>{t.status}</Badge>
                       </div>
                     ))
                   ) : (
@@ -122,15 +119,19 @@ export function Project() {
               </Card>
             </TabsContent>
 
-            <TabsContent value={tab} tabValue="sprints">
+            <TabsContent value="sprints">
               <SprintBoard workspaceId={workspaceId} projectId={projectId} />
             </TabsContent>
 
-            <TabsContent value={tab} tabValue="ai">
-              {project ? (
+            <TabsContent value="ai">
+              {project?.id ? (
                 <AiProjectPanel workspaceId={workspaceId} project={project} />
               ) : (
-                <Skeleton className="h-48 w-full" />
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-1/3" />
+                  <Skeleton className="h-32 w-full" />
+                  <p className="text-sm text-muted">Carregando dados do projeto para a IA...</p>
+                </div>
               )}
             </TabsContent>
 
