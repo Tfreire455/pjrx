@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { Rocket } from "lucide-react"; // Novo ícone para Sprints
 
 import { useProject } from "../hooks/useProject";
 import { useProjectTasks } from "../hooks/useProjectTasks";
@@ -9,13 +10,17 @@ import { useTask } from "../hooks/useTask";
 import { useUpdateTaskStatus } from "../hooks/useUpdateTaskStatus";
 
 import { ProjectHeader } from "../components/projects/ProjectHeader";
-import { ProjectTabs } from "../components/projects/ProjectTabs";
-import { TabsContent } from "../components/ui/tabs";
+import { ProjectTabs } from "../components/projects/ProjectTabs"; // Precisamos atualizar este também
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs"; // Import direto das Tabs
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
 import { Badge } from "../components/ui/badge";
 import { TaskDrawer } from "../components/projects/TaskDrawer";
 import { KanbanBoard } from "../components/kanban/KanbanBoard";
+
+// Novos Componentes
+import { SprintBoard } from "../components/sprints/SprintBoard";
+import { AiProjectPanel } from "../components/projects/AiProjectPanel";
 
 function parseData(q) {
   return q?.data?.data || q?.data || null;
@@ -23,17 +28,15 @@ function parseData(q) {
 
 export function Project() {
   const nav = useNavigate();
-  const { workspaceId, projectId, taskId } = useParams(); // IDs da URL
+  const { workspaceId, projectId, taskId } = useParams();
 
   const [tab, setTab] = useState("kanban");
 
   const projectQ = useProject(workspaceId, projectId);
   const tasksQ = useProjectTasks(workspaceId, projectId);
   const taskQ = useTask(workspaceId, taskId);
-
   const updateStatus = useUpdateTaskStatus(workspaceId, projectId);
 
-  // CORREÇÃO: Navegação absoluta incluindo /app
   function openTask(tId) {
     nav(`/app/w/${workspaceId}/p/${projectId}/t/${tId}`);
   }
@@ -46,21 +49,9 @@ export function Project() {
     updateStatus.mutate({ taskId, status });
   }
 
-  useEffect(() => {
-    if (projectQ.error) toast.error(projectQ.error.message);
-    if (tasksQ.error) toast.error(tasksQ.error.message);
-  }, [projectQ.error, tasksQ.error]);
-
   const project = parseData(projectQ);
   const tasks = (tasksQ.data?.data || tasksQ.data || []);
   const openDrawer = Boolean(taskId);
-
-  const stats = useMemo(() => {
-    const total = tasks.length;
-    const done = tasks.filter((t) => t.status === "done").length;
-    const blocked = tasks.filter((t) => t.status === "blocked").length;
-    return { total, done, blocked };
-  }, [tasks]);
 
   return (
     <div className="space-y-4">
@@ -70,40 +61,58 @@ export function Project() {
         <ProjectHeader project={project} />
       )}
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card><CardHeader><CardTitle>Tarefas</CardTitle></CardHeader><CardContent><div className="text-2xl font-semibold text-text">{stats.total}</div></CardContent></Card>
-        <Card><CardHeader><CardTitle>Done</CardTitle></CardHeader><CardContent><div className="text-2xl font-semibold text-text">{stats.done}</div></CardContent></Card>
-        <Card><CardHeader><CardTitle>Blocked</CardTitle></CardHeader><CardContent><div className="text-2xl font-semibold text-text">{stats.blocked}</div></CardContent></Card>
-      </div>
+      {/* Tabs Manuais para incluir Sprints */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger tabValue="kanban">Kanban</TabsTrigger>
+          <TabsTrigger tabValue="list">Lista</TabsTrigger>
+          <TabsTrigger tabValue="sprints">Sprints</TabsTrigger> {/* NOVA ABA */}
+          <TabsTrigger tabValue="ai">IA Copilot</TabsTrigger>
+        </TabsList>
 
-      <ProjectTabs tab={tab} setTab={setTab} />
+        <AnimatePresence mode="wait">
+          <motion.div key={tab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18 }} className="mt-4">
+            
+            <TabsContent value={tab} tabValue="kanban">
+              <Card>
+                <CardHeader><CardTitle>Quadro</CardTitle></CardHeader>
+                <CardContent>
+                  {tasksQ.isLoading ? <Skeleton className="h-72 w-full" /> : <KanbanBoard tasks={tasks} onOpenTask={openTask} onMoveTask={moveTask} />}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
-      <AnimatePresence mode="wait">
-        <motion.div key={tab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18 }}>
-          <TabsContent value={tab} tabValue="kanban">
-            <Card>
-              <CardHeader><CardTitle>Kanban</CardTitle></CardHeader>
-              <CardContent>
-                {tasksQ.isLoading ? <Skeleton className="h-72 w-full" /> : <KanbanBoard tasks={tasks} onOpenTask={openTask} onMoveTask={moveTask} />}
-              </CardContent>
-            </Card>
-          </TabsContent>
+            <TabsContent value={tab} tabValue="list">
+              <Card>
+                <CardHeader><CardTitle>Lista de Tarefas</CardTitle></CardHeader>
+                <CardContent className="space-y-2">
+                  {tasks.map((t) => (
+                    <div key={t.id} onClick={() => openTask(t.id)} className="p-3 border border-white/10 rounded-lg hover:bg-white/5 cursor-pointer flex justify-between items-center">
+                      <span>{t.title}</span>
+                      <Badge>{t.status}</Badge>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
-          <TabsContent value={tab} tabValue="list">
-            <Card>
-              <CardHeader><CardTitle>Lista</CardTitle></CardHeader>
-              <CardContent className="space-y-3">
-                {tasks.map((t) => (
-                  <button key={t.id} className="w-full text-left rounded-2xl border border-white/10 bg-white/3 p-4 hover:bg-white/5 transition" onClick={() => openTask(t.id)}>
-                    <div className="flex justify-between"><div className="font-semibold">{t.title}</div><Badge>{t.status}</Badge></div>
-                  </button>
-                ))}
-              </CardContent>
-            </Card>
-          </TabsContent>
-          {/* Calendar e AI placeholders mantidos */}
-        </motion.div>
-      </AnimatePresence>
+            {/* NOVA CONTEÚDO: SPRINTS */}
+            <TabsContent value={tab} tabValue="sprints">
+              <SprintBoard workspaceId={workspaceId} projectId={projectId} />
+            </TabsContent>
+
+            {/* CONTEÚDO ATUALIZADO: IA */}
+            <TabsContent value={tab} tabValue="ai">
+              {project ? (
+                <AiProjectPanel workspaceId={workspaceId} project={project} />
+              ) : (
+                <Skeleton className="h-48 w-full" />
+              )}
+            </TabsContent>
+
+          </motion.div>
+        </AnimatePresence>
+      </Tabs>
 
       <TaskDrawer open={openDrawer} onClose={closeDrawer} taskQuery={taskQ} workspaceId={workspaceId} />
     </div>
