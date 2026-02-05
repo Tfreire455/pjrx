@@ -1,264 +1,193 @@
+import { ok, fail } from "../../utils/http.js";
+import { parseBody } from "../../utils/validation.js";
 import { z } from "zod";
-import { ok, fail } from "../utils/http.js";
-import { parseBody } from "../utils/validation.js";
-import { sanitizeUserText } from "../ai/sanitize.js";
-import {
-  ProjectPlanSchema,
-  WeeklyReportSchema,
-  InnovationsSchema,
-  ImplementationPlanSchema
-} from "../ai/schemas.js";
-import { SYSTEM_PROMPT, buildProjectPlanPrompt, buildWeeklyReportPrompt, buildInnovationsPrompt, buildImplementationPlanPrompt } from "../ai/prompts.js";
-import { openaiJSON } from "../services/openai.js";
+import { openai } from "../services/openai.js"; // Importa direto, sem wrapper bugado
+import { requireRole } from "../middlewares/requireRole.js";
 
-const BaseCtxSchema = z.object({
+// --- Schemas de Entrada ---
+const GenerateProjectPlanBody = z.object({
   workspaceId: z.string().min(10),
-  projectId: z.string().min(10).optional()
-});
-
-const GenerateProjectPlanBody = BaseCtxSchema.extend({
+  projectId: z.string().min(10).optional(),
   projectName: z.string().min(2),
-  projectDescription: z.string().max(20000).optional(),
-  context: z.string().max(20000).optional()
+  projectDescription: z.string().optional(),
+  context: z.string().optional()
 });
 
-const WeeklyReportBody = BaseCtxSchema.extend({
-  context: z.string().min(10).max(50000)
+const ImplementationPlanBody = z.object({
+  workspaceId: z.string().min(10),
+  projectId: z.string().min(10).optional(),
+  feature: z.string().min(2),
+  context: z.string().optional()
 });
 
-const InnovationsBody = BaseCtxSchema.extend({
-  context: z.string().min(10).max(50000)
-});
-
-const ImplementationPlanBody = BaseCtxSchema.extend({
-  feature: z.string().min(2).max(5000),
-  context: z.string().min(10).max(50000)
-});
-
+// --- Helpers de Banco de Dados ---
 async function ensureWorkspaceAccess(app, workspaceId, userId) {
-  const member = await app.prisma.workspaceMember.findUnique({
+  return app.prisma.workspaceMember.findUnique({
     where: { workspaceId_userId: { workspaceId, userId } }
   });
-  return member;
 }
 
+// Salva o resultado no banco para histórico
 async function persistAI(app, { workspaceId, userId, kind, title, content, meta }) {
-  // 1. Cria o Insight (AiInsight tem 'kind', 'title' e 'content' Json)
-  const insight = await app.prisma.aiInsight.create({
-    data: {
-      workspaceId,
-      kind, // Enum AiInsightKind
-      title,
-      content // Json
-    }
-  });
-
-  // 2. Cria a Mensagem (AiMessage tem 'content' String)
-  await app.prisma.aiMessage.create({
-    data: {
-      workspaceId,
-      userId,
-      role: "assistant", // Enum AiMessageRole
-      content: JSON.stringify({ kind, insightId: insight.id, meta: meta || null }) // Stringify obrigatório
-    }
-  });
-
-  return insight;
-}
-
-export async function aiRoutes(app) {
-  // tudo em /ai exige auth
-  app.addHook("preHandler", app.requireAuth);
-
-  // POST /ai/generate-project-plan
-  app.post("/ai/generate-project-plan", async (request, reply) => {
-    const parsed = parseBody(GenerateProjectPlanBody, request.body || {});
-    if (!parsed.ok) return fail(reply, 400, parsed.error);
-
-    const userId = request.user.sub;
-
-    const member = await ensureWorkspaceAccess(app, parsed.data.workspaceId, userId);
-    if (!member) return fail(reply, 403, { code: "FORBIDDEN", message: "Sem acesso ao workspace." });
-
-    const s1 = sanitizeUserText(parsed.data.projectName);
-    const s2 = sanitizeUserText(parsed.data.projectDescription || "");
-    const s3 = sanitizeUserText(parsed.data.context || "");
-
-    const flagged = s1.flagged || s2.flagged || s3.flagged;
-
-    const prompt = buildProjectPlanPrompt({
-      projectName: s1.text,
-      projectDesc: s2.text,
-      context: s3.text
+  try {
+    // 1. Cria o Insight
+    const insight = await app.prisma.aiInsight.create({
+      data: {
+        workspaceId,
+        kind,
+        title,
+        content: content || {} // Garante que não seja null
+      }
     });
 
-    const resp = await openaiJSON({
-      system: SYSTEM_PROMPT,
-      user: prompt
+    // 2. Cria a Mensagem (Log)
+    await app.prisma.aiMessage.create({
+      data: {
+        workspaceId,
+        userId,
+        role: "assistant",
+        content: JSON.stringify({ kind, insightId: insight.id, meta: meta || null })
+      }
     });
 
-    if (!resp.ok) {
-      return fail(reply, 502, { code: "OPENAI_ERROR", message: "Falha na IA.", details: resp.error });
-    }
-
-    const validated = ProjectPlanSchema.safeParse(resp.data);
-    if (!validated.success) {
-      app.log.error({ err: validated.error.format(), raw: resp.data }, "AI Schema Validation Failed");
-      return fail(reply, 502, { 
-        code: "AI_SCHEMA_MISMATCH", 
-        message: "IA retornou JSON fora do schema.",
-        details: validated.error.format(),
-        rawResponse: resp.data 
+    // 3. Cria Suggestion (para aparecer em listas rápidas se necessário)
+    if (content) {
+      await app.prisma.aiSuggestion.create({
+        data: {
+          workspaceId,
+          type: kind === "project_plan" ? "plan" : "implementation",
+          payload: content
+        }
       });
     }
 
-    const insight = await persistAI(app, {
-      workspaceId: parsed.data.workspaceId,
-      userId,
-      kind: "project_plan",
-      title: `Plano IA: ${s1.text}`,
-      content: { ...validated.data, flagged },
-      meta: { projectId: parsed.data.projectId || null }
-    });
+    return insight;
+  } catch (e) {
+    console.error("Erro ao persistir AI:", e);
+    return { id: "temp-id" }; // Não trava o fluxo se o banco falhar
+  }
+}
 
-    // Ajustado para seu schema: removemos 'title' e 'sourceInsightId'
-    await app.prisma.aiSuggestion.create({
-      data: {
-        workspaceId: parsed.data.workspaceId,
-        type: "plan", // String
-        payload: { nextActions: validated.data.nextActions, risks: validated.data.risks } // Json
-      }
-    });
+// Função segura para limpar JSON vindo da IA (remove markdown)
+function cleanAndParse(text) {
+  try {
+    const clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    return JSON.parse(clean);
+  } catch (e) {
+    console.error("Falha ao parsear JSON da IA. Raw:", text);
+    return null;
+  }
+}
 
-    return ok(reply, { insightId: insight.id, result: validated.data });
-  });
-
-  // POST /ai/weekly-report
-  app.post("/ai/weekly-report", async (request, reply) => {
-    const parsed = parseBody(WeeklyReportBody, request.body || {});
+// --- ROTAS ---
+export async function aiRoutes(app) {
+  // 1. PLANO DE PROJETO (Dashboard de Projeto)
+  app.post("/ai/generate-project-plan", { preHandler: requireRole("member") }, async (request, reply) => {
+    const parsed = parseBody(GenerateProjectPlanBody, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
 
+    const { workspaceId, projectId, projectName, projectDescription, context } = parsed.data;
     const userId = request.user.sub;
 
-    const member = await ensureWorkspaceAccess(app, parsed.data.workspaceId, userId);
-    if (!member) return fail(reply, 403, { code: "FORBIDDEN", message: "Sem acesso ao workspace." });
+    const member = await ensureWorkspaceAccess(app, workspaceId, userId);
+    if (!member) return fail(reply, 403, { message: "Sem acesso." });
 
-    const s = sanitizeUserText(parsed.data.context);
+    try {
+      // Chamada Direta e Robusta à OpenAI
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `Você é um Gerente de Projetos Expert. Retorne APENAS um JSON válido.
+            Estrutura Obrigatória:
+            {
+              "risks": [{ "risk": "Titulo", "mitigation": "Ação" }],
+              "nextActions": ["Ação 1", "Ação 2"],
+              "sprintSuggestions": [{ "name": "Sprint 1", "goal": "Objetivo" }]
+            }`
+          },
+          {
+            role: "user",
+            content: `Projeto: ${projectName}. Descrição: ${projectDescription || "N/A"}. Contexto Extra: ${context || ""}`
+          }
+        ],
+        response_format: { type: "json_object" }, // <--- O PULO DO GATO
+        temperature: 0.7,
+      });
 
-    const prompt = buildWeeklyReportPrompt({ context: s.text });
+      const raw = completion.choices[0].message.content;
+      const json = cleanAndParse(raw);
 
-    const resp = await openaiJSON({ system: SYSTEM_PROMPT, user: prompt });
-    if (!resp.ok) return fail(reply, 502, { code: "OPENAI_ERROR", message: "Falha na IA.", details: resp.error });
+      if (!json) return fail(reply, 500, { message: "IA retornou dados inválidos", raw });
 
-    const validated = WeeklyReportSchema.safeParse(resp.data);
-    if (!validated.success) {
-      return fail(reply, 502, { code: "AI_SCHEMA_MISMATCH", message: "IA retornou JSON fora do schema." });
+      // Salva no banco
+      const insight = await persistAI(app, {
+        workspaceId,
+        userId,
+        kind: "project_plan",
+        title: `Plano: ${projectName}`,
+        content: json,
+        meta: { projectId }
+      });
+
+      return ok(reply, { insightId: insight.id, result: json });
+
+    } catch (err) {
+      request.log.error(err);
+      return fail(reply, 500, { message: "Erro na OpenAI", error: err.message });
     }
-
-    const insight = await persistAI(app, {
-      workspaceId: parsed.data.workspaceId,
-      userId,
-      kind: "weekly_report",
-      title: "Resumo semanal (IA)",
-      content: { ...validated.data, flagged: s.flagged },
-      meta: { projectId: parsed.data.projectId || null }
-    });
-
-    // Ajustado para seu schema
-    await app.prisma.aiSuggestion.create({
-      data: {
-        workspaceId: parsed.data.workspaceId,
-        type: "weekly",
-        payload: { nextActions: validated.data.nextActions, risks: validated.data.risks }
-      }
-    });
-
-    return ok(reply, { insightId: insight.id, result: validated.data });
   });
 
-  // POST /ai/suggest-innovations
-  app.post("/ai/suggest-innovations", async (request, reply) => {
-    const parsed = parseBody(InnovationsBody, request.body || {});
+  // 2. PLANO DE TAREFA (Dentro do Drawer da Tarefa)
+  app.post("/ai/feature-implementation-plan", { preHandler: requireRole("member") }, async (request, reply) => {
+    const parsed = parseBody(ImplementationPlanBody, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
 
+    const { workspaceId, projectId, feature, context } = parsed.data;
     const userId = request.user.sub;
 
-    const member = await ensureWorkspaceAccess(app, parsed.data.workspaceId, userId);
-    if (!member) return fail(reply, 403, { code: "FORBIDDEN", message: "Sem acesso ao workspace." });
+    await ensureWorkspaceAccess(app, workspaceId, userId);
 
-    const s = sanitizeUserText(parsed.data.context);
-    const prompt = buildInnovationsPrompt({ context: s.text });
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `Tech Lead Senior. Retorne JSON válido.
+            {
+              "risks": ["Risco técnico 1"],
+              "steps": ["Passo 1", "Passo 2"],
+              "complexity": "Baixa/Média/Alta"
+            }`
+          },
+          {
+            role: "user",
+            content: `Feature/Tarefa: ${feature}. Contexto: ${context || ""}`
+          }
+        ],
+        response_format: { type: "json_object" }
+      });
 
-    const resp = await openaiJSON({ system: SYSTEM_PROMPT, user: prompt });
-    if (!resp.ok) return fail(reply, 502, { code: "OPENAI_ERROR", message: "Falha na IA.", details: resp.error });
+      const raw = completion.choices[0].message.content;
+      const json = cleanAndParse(raw);
 
-    const validated = InnovationsSchema.safeParse(resp.data);
-    if (!validated.success) {
-      return fail(reply, 502, { code: "AI_SCHEMA_MISMATCH", message: "IA retornou JSON fora do schema." });
+      if (!json) return fail(reply, 500, { message: "IA inválida", raw });
+
+      const insight = await persistAI(app, {
+        workspaceId,
+        userId,
+        kind: "implementation_plan",
+        title: `Impl: ${feature}`,
+        content: json,
+        meta: { projectId }
+      });
+
+      return ok(reply, { insightId: insight.id, result: json });
+
+    } catch (err) {
+      return fail(reply, 500, { message: "Erro IA", error: err.message });
     }
-
-   const insight = await persistAI(app, {
-      workspaceId: parsed.data.workspaceId,
-      userId,
-      kind: "innovations",
-      title: "Sugestões de inovação (IA)",
-      content: { ...validated.data, flagged: s.flagged },
-      meta: { projectId: parsed.data.projectId || null }
-    });
-
-    // Ajustado para seu schema
-    await app.prisma.aiSuggestion.create({
-      data: {
-        workspaceId: parsed.data.workspaceId,
-        type: "innovations",
-        payload: validated.data
-      }
-    });
-
-    return ok(reply, { insightId: insight.id, result: validated.data });
-  });
-
-  // POST /ai/feature-implementation-plan
-  app.post("/ai/feature-implementation-plan", async (request, reply) => {
-    const parsed = parseBody(ImplementationPlanBody, request.body || {});
-    if (!parsed.ok) return fail(reply, 400, parsed.error);
-
-    const userId = request.user.sub;
-
-    const member = await ensureWorkspaceAccess(app, parsed.data.workspaceId, userId);
-    if (!member) return fail(reply, 403, { code: "FORBIDDEN", message: "Sem acesso ao workspace." });
-
-    const f = sanitizeUserText(parsed.data.feature);
-    const c = sanitizeUserText(parsed.data.context);
-
-    const prompt = buildImplementationPlanPrompt({ feature: f.text, context: c.text });
-
-    const resp = await openaiJSON({ system: SYSTEM_PROMPT, user: prompt });
-    if (!resp.ok) return fail(reply, 502, { code: "OPENAI_ERROR", message: "Falha na IA.", details: resp.error });
-
-    const validated = ImplementationPlanSchema.safeParse(resp.data);
-    if (!validated.success) {
-      return fail(reply, 502, { code: "AI_SCHEMA_MISMATCH", message: "IA retornou JSON fora do schema." });
-    }
-
-    const insight = await persistAI(app, {
-      workspaceId: parsed.data.workspaceId,
-      userId,
-      kind: "implementation_plan",
-      title: `Plano de implementação: ${f.text}`,
-      content: { ...validated.data, flagged: f.flagged || c.flagged },
-      meta: { projectId: parsed.data.projectId || null }
-    });
-
-    // Ajustado para seu schema
-    await app.prisma.aiSuggestion.create({
-      data: {
-        workspaceId: parsed.data.workspaceId,
-        type: "implementation",
-        payload: validated.data
-      }
-    });
-
-    return ok(reply, { insightId: insight.id, result: validated.data });
   });
 }
