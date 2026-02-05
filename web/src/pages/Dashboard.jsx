@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Rocket, Plus, ChevronDown, Building2 } from "lucide-react";
+import { Rocket, Plus, ChevronDown, Building2, FolderPlus, ArrowRight } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useWorkspaces } from "../hooks/useWorkspaces";
-import { useProjects } from "../hooks/useProjects";
+import { useProjects, useCreateProject } from "../hooks/useProjects"; // Import atualizado
 import { useAtRiskTasks } from "../hooks/useAtRiskTasks";
 import { useNotifications } from "../hooks/useNotifications";
 import { apiFetch } from "../lib/api";
@@ -13,10 +13,12 @@ import { apiFetch } from "../lib/api";
 import { StatCard } from "../components/dashboard/StatCard";
 import { RiskList } from "../components/dashboard/RiskList";
 import { ActivityList } from "../components/dashboard/ActivityList";
+import { CreateProjectModal } from "../components/projects/CreateProjectModal"; // Import novo
 
 import { Badge } from "../components/ui/badge";
 import { EmptyState } from "../components/ui/empty";
 import { Button } from "../components/ui/button";
+import { Card, CardContent } from "../components/ui/card";
 
 function normalizeWorkspaces(res) {
   if (!res) return [];
@@ -28,25 +30,24 @@ function normalizeWorkspaces(res) {
 }
 
 export function Dashboard() {
-  const { workspaceId } = useParams(); // ID vindo da URL (/app/w/:id)
+  const { workspaceId } = useParams();
   const nav = useNavigate();
   const queryClient = useQueryClient();
   
   const wsQ = useWorkspaces();
   const workspaces = useMemo(() => normalizeWorkspaces(wsQ.data), [wsQ.data]);
   
-  const [isCreating, setCreating] = useState(false);
+  const [isCreatingWs, setCreatingWs] = useState(false);
+  const [isProjectModalOpen, setProjectModalOpen] = useState(false); // Estado do modal
 
-  // Lógica de Redirecionamento Automático:
-  // Se estamos na raiz (/app) e temos workspaces, vai para o primeiro.
   useEffect(() => {
     if (!workspaceId && !wsQ.isLoading && workspaces.length > 0) {
       nav(`/app/w/${workspaces[0].id}`, { replace: true });
     }
   }, [workspaceId, wsQ.isLoading, workspaces, nav]);
 
-  // Hooks de dados (só rodam se tivermos um ID na URL)
   const projectsQ = useProjects(workspaceId);
+  const createProject = useCreateProject(workspaceId); // Mutation
   const riskQ = useAtRiskTasks(workspaceId);
   const notifQ = useNotifications(workspaceId, 10);
 
@@ -57,7 +58,7 @@ export function Dashboard() {
     if (name === null) return;
     if (!name.trim()) name = `Workspace #${Math.floor(Math.random() * 10000)}`;
 
-    setCreating(true);
+    setCreatingWs(true);
     try {
       const res = await apiFetch("/workspaces", { method: "POST", body: { name } });
       toast.success(`Workspace "${name}" criado!`);
@@ -65,31 +66,32 @@ export function Dashboard() {
       
       const newWs = res.workspace || res.data?.workspace;
       if (newWs?.id) {
-        nav(`/app/w/${newWs.id}`); // Navega para o novo workspace
+        nav(`/app/w/${newWs.id}`);
       }
     } catch (e) {
       toast.error(e.message || "Erro ao criar workspace");
     } finally {
-      setCreating(false);
+      setCreatingWs(false);
     }
   }
 
-  // Loading State
+  // Dados
+  const projects = Array.isArray(projectsQ.data) ? projectsQ.data : (projectsQ.data?.projects || []);
+  const tasks = Array.isArray(riskQ.data) ? riskQ.data : (riskQ.data?.tasks || []);
+  const notifs = Array.isArray(notifQ.data) ? notifQ.data : (notifQ.data?.items || []);
+
+  const metrics = { projects: projects.length, atRisk: tasks.length, activity: notifs.length };
+
   if (wsQ.isLoading || (!workspaceId && workspaces.length > 0)) {
     return <div className="p-8 text-muted animate-pulse">Carregando ambiente...</div>;
   }
 
-  // Estado Vazio (Sem workspaces criados)
   if (!workspaceId && workspaces.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
-        <EmptyState
-          icon={Rocket}
-          title="Bem-vindo ao Project OS"
-          subtitle="Crie seu primeiro workspace para começar."
-        />
+        <EmptyState icon={Rocket} title="Bem-vindo ao Project OS" subtitle="Crie seu primeiro workspace para começar." />
         <div className="mt-6">
-          <Button onClick={handleCreateWorkspace} disabled={isCreating}>
+          <Button onClick={handleCreateWorkspace} disabled={isCreatingWs}>
             <Plus className="mr-2 h-4 w-4" /> Criar Workspace
           </Button>
         </div>
@@ -97,22 +99,14 @@ export function Dashboard() {
     );
   }
 
-  // Dados para widgets
-  const projects = Array.isArray(projectsQ.data) ? projectsQ.data : (projectsQ.data?.projects || []);
-  const tasks = Array.isArray(riskQ.data) ? riskQ.data : (riskQ.data?.tasks || []);
-  const notifs = Array.isArray(notifQ.data) ? notifQ.data : (notifQ.data?.items || []);
-
-  const metrics = { projects: projects.length, atRisk: tasks.length, activity: notifs.length };
-
   return (
     <div className="space-y-6">
-      {/* Header com Dropdown de Workspace */}
+      {/* Header */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Building2 size={20} />
           </div>
-          
           <div>
             <div className="text-xs text-muted">Workspace atual</div>
             <div className="relative group">
@@ -131,10 +125,13 @@ export function Dashboard() {
         </div>
 
         <div className="flex items-center gap-2">
-           <Button variant="outline" size="sm" onClick={handleCreateWorkspace} disabled={isCreating}>
+           <Button variant="outline" size="sm" onClick={handleCreateWorkspace} disabled={isCreatingWs}>
             <Plus className="mr-2 h-3 w-3" /> Novo Workspace
           </Button>
-          <Badge tone="secondary">Beta</Badge>
+          {/* BOTÃO DE NOVO PROJETO */}
+          <Button size="sm" onClick={() => setProjectModalOpen(true)}>
+            <FolderPlus className="mr-2 h-4 w-4" /> Novo Projeto
+          </Button>
         </div>
       </div>
 
@@ -145,10 +142,41 @@ export function Dashboard() {
         <StatCard title="Atividade" hint="últimas" tone="secondary" value={metrics.activity} loading={notifQ.isLoading} />
       </div>
 
+      {/* Lista de Projetos Recentes (Atalho) */}
+      {projects.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-muted uppercase tracking-wider">Meus Projetos</h3>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {projects.map(p => (
+              <Card 
+                key={p.id} 
+                className="hover:border-primary/50 transition cursor-pointer group"
+                onClick={() => nav(`/app/w/${workspaceId}/p/${p.id}`)}
+              >
+                <CardContent className="p-4 flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold text-text group-hover:text-primary transition">{p.name}</div>
+                    <div className="text-xs text-muted truncate max-w-[200px]">{p.description || "Sem descrição"}</div>
+                  </div>
+                  <ArrowRight size={16} className="text-muted opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <RiskList loading={riskQ.isLoading} tasks={tasks} />
         <ActivityList loading={notifQ.isLoading} items={notifs} />
       </div>
+
+      {/* Modal de Criação */}
+      <CreateProjectModal 
+        open={isProjectModalOpen} 
+        onClose={() => setProjectModalOpen(false)} 
+        createProject={createProject} 
+      />
     </div>
   );
 }
