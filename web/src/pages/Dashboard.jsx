@@ -5,7 +5,7 @@ import { Rocket, Plus, ChevronDown, Building2, FolderPlus, ArrowRight } from "lu
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useWorkspaces } from "../hooks/useWorkspaces";
-import { useProjects, useCreateProject } from "../hooks/useProjects"; // Import atualizado
+import { useProjects, useCreateProject } from "../hooks/useProjects"; 
 import { useAtRiskTasks } from "../hooks/useAtRiskTasks";
 import { useNotifications } from "../hooks/useNotifications";
 import { apiFetch } from "../lib/api";
@@ -13,13 +13,35 @@ import { apiFetch } from "../lib/api";
 import { StatCard } from "../components/dashboard/StatCard";
 import { RiskList } from "../components/dashboard/RiskList";
 import { ActivityList } from "../components/dashboard/ActivityList";
-import { CreateProjectModal } from "../components/projects/CreateProjectModal"; // Import novo
+import { CreateProjectModal } from "../components/projects/CreateProjectModal"; 
 
 import { Badge } from "../components/ui/badge";
 import { EmptyState } from "../components/ui/empty";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 
+// Função para extrair dados com segurança (Resolve o problema de não aparecer)
+function extractData(res, key) {
+  if (!res) return [];
+  // Se a resposta for direta [..]
+  if (Array.isArray(res)) return res;
+  
+  // Se for { data: { projects: [...] } } (Padrão do seu backend)
+  if (res.data && res.data[key] && Array.isArray(res.data[key])) {
+    return res.data[key];
+  }
+  
+  // Se for { projects: [...] }
+  if (res[key] && Array.isArray(res[key])) {
+    return res[key];
+  }
+
+  // Fallbacks genéricos
+  if (res.data && Array.isArray(res.data)) return res.data;
+  return [];
+}
+
+// Normaliza workspaces (que tem estrutura variada as vezes)
 function normalizeWorkspaces(res) {
   if (!res) return [];
   if (Array.isArray(res)) return res;
@@ -38,16 +60,18 @@ export function Dashboard() {
   const workspaces = useMemo(() => normalizeWorkspaces(wsQ.data), [wsQ.data]);
   
   const [isCreatingWs, setCreatingWs] = useState(false);
-  const [isProjectModalOpen, setProjectModalOpen] = useState(false); // Estado do modal
+  const [isProjectModalOpen, setProjectModalOpen] = useState(false);
 
+  // Redireciona para o primeiro workspace se estiver na raiz
   useEffect(() => {
     if (!workspaceId && !wsQ.isLoading && workspaces.length > 0) {
       nav(`/app/w/${workspaces[0].id}`, { replace: true });
     }
   }, [workspaceId, wsQ.isLoading, workspaces, nav]);
 
+  // Hooks de dados
   const projectsQ = useProjects(workspaceId);
-  const createProject = useCreateProject(workspaceId); // Mutation
+  const createProject = useCreateProject(workspaceId);
   const riskQ = useAtRiskTasks(workspaceId);
   const notifQ = useNotifications(workspaceId, 10);
 
@@ -75,12 +99,16 @@ export function Dashboard() {
     }
   }
 
-  // Dados
-  const projects = Array.isArray(projectsQ.data) ? projectsQ.data : (projectsQ.data?.projects || []);
-  const tasks = Array.isArray(riskQ.data) ? riskQ.data : (riskQ.data?.tasks || []);
-  const notifs = Array.isArray(notifQ.data) ? notifQ.data : (notifQ.data?.items || []);
+  // Extração segura dos dados usando a função corrigida
+  const projects = extractData(projectsQ.data, "projects");
+  const tasks = extractData(riskQ.data, "tasks");
+  const notifs = extractData(notifQ.data, "items") || extractData(notifQ.data, "notifications"); // Tenta ambos
 
-  const metrics = { projects: projects.length, atRisk: tasks.length, activity: notifs.length };
+  const metrics = { 
+    projects: projects.length, 
+    atRisk: tasks.length, 
+    activity: notifs.length 
+  };
 
   if (wsQ.isLoading || (!workspaceId && workspaces.length > 0)) {
     return <div className="p-8 text-muted animate-pulse">Carregando ambiente...</div>;
@@ -128,7 +156,6 @@ export function Dashboard() {
            <Button variant="outline" size="sm" onClick={handleCreateWorkspace} disabled={isCreatingWs}>
             <Plus className="mr-2 h-3 w-3" /> Novo Workspace
           </Button>
-          {/* BOTÃO DE NOVO PROJETO */}
           <Button size="sm" onClick={() => setProjectModalOpen(true)}>
             <FolderPlus className="mr-2 h-4 w-4" /> Novo Projeto
           </Button>
@@ -142,28 +169,34 @@ export function Dashboard() {
         <StatCard title="Atividade" hint="últimas" tone="secondary" value={metrics.activity} loading={notifQ.isLoading} />
       </div>
 
-      {/* Lista de Projetos Recentes (Atalho) */}
-      {projects.length > 0 && (
+      {/* Lista de Projetos (Grid de Cards) */}
+      {projects.length > 0 ? (
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-muted uppercase tracking-wider">Meus Projetos</h3>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {projects.map(p => (
               <Card 
                 key={p.id} 
-                className="hover:border-primary/50 transition cursor-pointer group"
+                className="hover:border-primary/50 transition cursor-pointer group bg-surface"
                 onClick={() => nav(`/app/w/${workspaceId}/p/${p.id}`)}
               >
                 <CardContent className="p-4 flex items-center justify-between">
-                  <div>
-                    <div className="font-semibold text-text group-hover:text-primary transition">{p.name}</div>
-                    <div className="text-xs text-muted truncate max-w-[200px]">{p.description || "Sem descrição"}</div>
+                  <div className="min-w-0">
+                    <div className="font-semibold text-text group-hover:text-primary transition truncate">{p.name}</div>
+                    <div className="text-xs text-muted truncate max-w-[200px] mt-1">{p.description || "Sem descrição"}</div>
                   </div>
-                  <ArrowRight size={16} className="text-muted opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition" />
+                  <ArrowRight size={16} className="text-muted opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition shrink-0" />
                 </CardContent>
               </Card>
             ))}
           </div>
         </div>
+      ) : (
+        !projectsQ.isLoading && (
+          <div className="text-center p-10 border border-dashed border-white/10 rounded-xl text-muted">
+            Nenhum projeto encontrado. Crie o primeiro!
+          </div>
+        )
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -171,7 +204,6 @@ export function Dashboard() {
         <ActivityList loading={notifQ.isLoading} items={notifs} />
       </div>
 
-      {/* Modal de Criação */}
       <CreateProjectModal 
         open={isProjectModalOpen} 
         onClose={() => setProjectModalOpen(false)} 
