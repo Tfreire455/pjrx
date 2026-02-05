@@ -1,0 +1,766 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * =========================
+ * Enums
+ * =========================
+ */
+
+enum WorkspaceRole {
+  owner
+  admin
+  member
+  guest
+}
+
+enum ProjectStatus {
+  active
+  paused
+  completed
+  archived
+}
+
+enum TaskStatus {
+  todo
+  doing
+  blocked
+  done
+  archived
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum DependencyType {
+  blocks
+  relates
+}
+
+enum SprintStatus {
+  planned
+  active
+  completed
+  archived
+}
+
+enum MilestoneStatus {
+  open
+  completed
+  archived
+}
+
+enum NotificationType {
+  system
+  task
+  project
+  sprint
+  billing
+  whatsapp
+  ai
+}
+
+enum WhatsappStatus {
+  queued
+  sent
+  delivered
+  failed
+}
+
+enum ScheduleType {
+  task_reminder
+  project_stale_detector
+  weekly_ai_report
+  rule_engine_tick
+}
+
+enum AiInsightKind {
+  project_plan
+  weekly_report
+  innovation
+  implementation_plan
+  risk_analysis
+}
+
+enum AiMessageRole {
+  system
+  user
+  assistant
+}
+
+enum RuleTrigger {
+  manual
+  cron
+  event
+}
+
+enum RuleRunStatus {
+  success
+  failed
+  skipped
+}
+
+/**
+ * =========================
+ * Core
+ * =========================
+ */
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String?
+  avatarUrl    String?
+  passwordHash String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+
+  identities      AuthIdentity[]
+  memberships     WorkspaceMember[]
+  ownedWorkspaces Workspace[]       @relation("WorkspaceOwner")
+
+  projectsCreated Project[]      @relation("ProjectCreatedBy")
+  tasksReported   Task[]         @relation("TaskReporter")
+  tasksAssigned   Task[]         @relation("TaskAssignee")
+  comments        Comment[]
+  attachments     Attachment[]
+  notifications   Notification[]
+  whatsappPrefs   WhatsappPref[]
+  whatsappLogs    WhatsappLog[]
+  aiMessages      AiMessage[]
+  auditLogs       AuditLog[]     @relation("AuditActor")
+
+  // ✅ ADICIONADOS (opostos das relações faltantes)
+  checklistTemplatesCreated ChecklistTemplate[] @relation("ChecklistTemplateCreatedBy")
+  schedules                 Schedule[]          @relation("ScheduleUser")
+  authSessions              AuthSession[]
+
+  @@index([email])
+}
+
+model AuthIdentity {
+  id             String   @id @default(cuid())
+  userId         String
+  provider       String
+  providerUserId String
+  email          String?
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner              User                @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members            WorkspaceMember[]
+  projects           Project[]
+  tasks              Task[]
+  subtasks           Subtask[]
+  dependencies       TaskDependency[]
+  checklistTemplates ChecklistTemplate[]
+  checklists         Checklist[]
+  checklistItems     ChecklistItem[]
+  sprints            Sprint[]
+  sprintItems        SprintItem[]
+  milestones         Milestone[]
+  comments           Comment[]
+  attachments        Attachment[]
+  notifications      Notification[]
+  whatsappPrefs      WhatsappPref[]
+  whatsappLogs       WhatsappLog[]
+  schedules          Schedule[]
+  aiInsights         AiInsight[]
+  aiMessages         AiMessage[]
+  aiSuggestions      AiSuggestion[]
+  rules              RuleDefinition[]
+  ruleRuns           RuleRun[]
+  auditLogs          AuditLog[]
+  authSessions       AuthSession[]
+
+  @@unique([slug])
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(member)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId, role])
+}
+
+/**
+ * =========================
+ * Projects / Tasks
+ * =========================
+ */
+
+model Project {
+  id          String        @id @default(cuid())
+  workspaceId String
+  name        String
+  slug        String
+  description String?
+  status      ProjectStatus @default(active)
+  startAt     DateTime?
+  dueAt       DateTime?
+  createdById String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  tasks         Task[]
+  sprints       Sprint[]
+  milestones    Milestone[]
+  comments      Comment[]
+  attachments   Attachment[]
+  aiInsights    AiInsight[]
+  aiSuggestions AiSuggestion[]
+  whatsappLogs  WhatsappLog[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId, status])
+  @@index([workspaceId, dueAt])
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  workspaceId String
+  projectId   String
+  title       String
+  description String?
+  status      TaskStatus   @default(todo)
+  priority    TaskPriority @default(medium)
+
+  assigneeId String?
+  reporterId String?
+
+  startAt     DateTime?
+  dueAt       DateTime?
+  completedAt DateTime?
+
+  position Int @default(0)
+
+  atRisk  Boolean @default(false)
+  blocked Boolean @default(false)
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee  User?     @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  reporter  User?     @relation("TaskReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+
+  subtasks         Subtask[]
+  dependenciesFrom TaskDependency[] @relation("DependencyFrom")
+  dependenciesTo   TaskDependency[] @relation("DependencyTo")
+  checklists       Checklist[]
+  comments         Comment[]
+  attachments      Attachment[]
+  sprintItems      SprintItem[]
+  aiInsights       AiInsight[]
+  aiSuggestions    AiSuggestion[]
+  whatsappLogs     WhatsappLog[]
+
+  @@index([workspaceId, projectId, status])
+  @@index([workspaceId, assigneeId, dueAt])
+  @@index([workspaceId, atRisk, blocked])
+}
+
+model TaskDependency {
+  id              String         @id @default(cuid())
+  workspaceId     String
+  taskId          String
+  dependsOnTaskId String
+  type            DependencyType @default(blocks)
+  createdAt       DateTime       @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  task      Task      @relation("DependencyFrom", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn Task      @relation("DependencyTo", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@index([workspaceId, taskId])
+  @@index([workspaceId, dependsOnTaskId])
+}
+
+model Subtask {
+  id          String   @id @default(cuid())
+  workspaceId String
+  taskId      String
+  title       String
+  done        Boolean  @default(false)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, taskId])
+}
+
+/**
+ * =========================
+ * Checklists
+ * =========================
+ */
+
+model ChecklistTemplate {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  items       Json? // array de itens template
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  // ✅ AJUSTADO: nome da relação + terá o oposto no User
+  createdBy User? @relation("ChecklistTemplateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  checklists Checklist[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model Checklist {
+  id          String   @id @default(cuid())
+  workspaceId String
+  taskId      String
+  templateId  String?
+  title       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  task      Task               @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  template  ChecklistTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  items ChecklistItem[]
+
+  @@index([workspaceId, taskId])
+}
+
+model ChecklistItem {
+  id          String   @id @default(cuid())
+  workspaceId String
+  checklistId String
+  content     String
+  done        Boolean  @default(false)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  checklist Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, checklistId])
+}
+
+/**
+ * =========================
+ * Sprints / Milestones
+ * =========================
+ */
+
+model Sprint {
+  id          String       @id @default(cuid())
+  workspaceId String
+  projectId   String
+  name        String
+  goal        String?
+  startAt     DateTime
+  endAt       DateTime
+  status      SprintStatus @default(planned)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  items SprintItem[]
+
+  @@index([workspaceId, projectId, status])
+  @@index([workspaceId, endAt])
+}
+
+model SprintItem {
+  id          String   @id @default(cuid())
+  workspaceId String
+  sprintId    String
+  taskId      String
+  addedAt     DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sprint    Sprint    @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([sprintId, taskId])
+  @@index([workspaceId, sprintId])
+}
+
+model Milestone {
+  id          String          @id @default(cuid())
+  workspaceId String
+  projectId   String
+  name        String
+  description String?
+  dueAt       DateTime?
+  status      MilestoneStatus @default(open)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, projectId, status])
+  @@index([workspaceId, dueAt])
+}
+
+/**
+ * =========================
+ * Comments / Attachments
+ * =========================
+ */
+
+model Comment {
+  id          String   @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  taskId      String?
+  authorId    String
+  body        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task      Task?     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, taskId])
+  @@index([workspaceId, projectId])
+  @@index([authorId])
+}
+
+model Attachment {
+  id          String   @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  taskId      String?
+  uploaderId  String
+  fileName    String
+  mimeType    String?
+  sizeBytes   Int?
+  url         String? // metadata por enquanto
+  meta        Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task      Task?     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploader  User      @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, projectId])
+  @@index([workspaceId, taskId])
+  @@index([uploaderId])
+}
+
+/**
+ * =========================
+ * Notifications
+ * =========================
+ */
+
+model Notification {
+  id          String           @id @default(cuid())
+  workspaceId String
+  userId      String
+  type        NotificationType @default(system)
+  title       String
+  body        String?
+  data        Json?
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId, readAt])
+  @@index([userId, createdAt])
+}
+
+/**
+ * =========================
+ * WhatsApp
+ * =========================
+ */
+
+model WhatsappPref {
+  id          String  @id @default(cuid())
+  workspaceId String
+  userId      String
+  phoneE164   String
+  enabled     Boolean @default(true)
+
+  quietStartMin Int    @default(0) // 0..1439
+  quietEndMin   Int    @default(0) // 0..1439
+  timezone      String @default("America/Sao_Paulo")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@unique([workspaceId, phoneE164])
+  @@index([workspaceId, enabled])
+}
+
+model WhatsappLog {
+  id          String  @id @default(cuid())
+  workspaceId String
+  userId      String?
+  projectId   String?
+  taskId      String?
+
+  messageKey   String @unique
+  toPhoneE164  String
+  templateName String
+  payload      Json
+
+  // se você já tem enum WhatsappStatus, aproveite:
+  status            WhatsappStatus @default(queued)
+  providerMessageId String?
+  lastError         String?
+
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  failedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ✅ RELAÇÕES (lado oposto das listas em User/Workspace/Project/Task)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  task      Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
+  @@index([userId])
+  @@index([projectId])
+  @@index([taskId])
+}
+
+/**
+ * =========================
+ * Scheduler
+ * =========================
+ */
+
+model Schedule {
+  id          String       @id @default(cuid())
+  workspaceId String
+  userId      String?
+  type        ScheduleType
+  cron        String?
+  runAt       DateTime?
+  payload     Json?
+  enabled     Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  // ✅ AJUSTADO: nome da relação + terá o oposto no User
+  user User? @relation("ScheduleUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, type, enabled])
+  @@index([workspaceId, runAt])
+}
+
+/**
+ * =========================
+ * AI
+ * =========================
+ */
+
+model AiInsight {
+  id          String        @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  taskId      String?
+  kind        AiInsightKind
+  title       String
+  content     Json
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  task      Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, kind, createdAt])
+  @@index([workspaceId, projectId])
+  @@index([workspaceId, taskId])
+}
+
+model AiMessage {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String?
+  role        AiMessageRole
+  content     String
+  meta        Json?
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, userId])
+}
+
+model AiSuggestion {
+  id          String   @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  taskId      String?
+  type        String
+  score       Int      @default(0)
+  payload     Json
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  task      Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, type, score])
+  @@index([workspaceId, projectId])
+  @@index([workspaceId, taskId])
+}
+
+/**
+ * =========================
+ * Rule Engine
+ * =========================
+ */
+
+model RuleDefinition {
+  id          String      @id @default(cuid())
+  workspaceId String
+  key         String
+  name        String
+  description String?
+  enabled     Boolean     @default(true)
+  trigger     RuleTrigger @default(cron)
+  config      Json
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  runs      RuleRun[]
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId, enabled, trigger])
+}
+
+model RuleRun {
+  id          String        @id @default(cuid())
+  workspaceId String
+  ruleId      String
+  status      RuleRunStatus @default(success)
+  startedAt   DateTime      @default(now())
+  finishedAt  DateTime?
+  input       Json?
+  output      Json?
+  error       Json?
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  rule      RuleDefinition @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, ruleId, startedAt])
+  @@index([ruleId])
+}
+
+/**
+ * =========================
+ * Audit Log
+ * =========================
+ */
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorId     String?
+  action      String // ex: "task.create", "task.update", "project.archive"
+  entityType  String // ex: "Task", "Project"
+  entityId    String
+  before      Json?
+  after       Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, entityType, entityId])
+  @@index([workspaceId, actorId, createdAt])
+}
+
+model AuthSession {
+  id          String  @id @default(cuid())
+  userId      String
+  workspaceId String?
+
+  refreshTokenHash String
+  revokedAt        DateTime?
+  expiresAt        DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([userId, expiresAt])
+  @@index([workspaceId])
+}

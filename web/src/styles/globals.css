@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0B0F1A;
+  color: #EAF0FF;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(124, 92, 255, 0.35);
+}
+
+a { color: inherit; text-decoration: none; }
+
+
+/* ===== PRJX Premium Background ===== */
+.prjx-grid {
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(124,92,255,.18), transparent 40%),
+    radial-gradient(circle at 80% 30%, rgba(34,211,238,.14), transparent 45%),
+    radial-gradient(circle at 50% 90%, rgba(124,92,255,.10), transparent 45%),
+    linear-gradient(to bottom, rgba(255,255,255,.06) 1px, transparent 1px),
+    linear-gradient(to right, rgba(255,255,255,.06) 1px, transparent 1px);
+  background-size: auto, auto, auto, 54px 54px, 54px 54px;
+  background-position: center, center, center, center, center;
+}
+
+.prjx-noise {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .08;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.65'/%3E%3C/svg%3E");
+}
+
+.prjx-glow {
+  position: absolute;
+  inset: -40px;
+  filter: blur(50px);
+  opacity: .35;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(124,92,255,.55), transparent 45%),
+    radial-gradient(circle at 75% 25%, rgba(34,211,238,.35), transparent 45%),
+    radial-gradient(circle at 50% 85%, rgba(124,92,255,.25), transparent 45%);
+}
+
