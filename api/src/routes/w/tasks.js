@@ -24,9 +24,8 @@ export async function taskRoutes(app) {
         where,
         orderBy: [{ position: "asc" }, { createdAt: "desc" }],
         include: { 
-          // Include seguro: se subtasks não existir, o prisma ignoraria se não fosse relação
           subtasks: { orderBy: { position: "asc" } },
-          assignee: { select: { id: true, name: true, email: true } } // Removi avatarUrl para evitar crash
+          assignee: { select: { id: true, name: true, email: true } }
         }
       });
 
@@ -47,17 +46,26 @@ export async function taskRoutes(app) {
         },
         include: {
           subtasks: { orderBy: { position: "asc" } },
-          // Tenta incluir checklists. Se quebrar, é provável que o nome da relação no schema seja diferente
           checklists: { 
             include: { items: { orderBy: { position: "asc" } } } 
           },
           comments: { 
             orderBy: { createdAt: "desc" },
-            include: { author: { select: { id: true, name: true } } } // Select básico seguro
+            include: { author: { select: { id: true, name: true } } } 
           },
-          // Relações de dependência (verifique se seu schema usa estes nomes)
-          dependenciesFrom: { include: { dependsOnTask: true } },
-          dependenciesTo: { include: { task: true } },
+          // --- CORREÇÃO AQUI ---
+          // O nome correto da relação no seu schema é 'dependsOn' e não 'dependsOnTask'
+          dependenciesFrom: { 
+            include: { 
+              dependsOn: true // <--- CORRIGIDO
+            } 
+          },
+          dependenciesTo: { 
+            include: { 
+              task: true 
+            } 
+          },
+          // ---------------------
           assignee: { select: { id: true, name: true } },
           reporter: { select: { id: true, name: true } }
         }
@@ -68,7 +76,7 @@ export async function taskRoutes(app) {
       return ok(reply, { task });
 
     } catch (e) {
-      console.error("Erro no GET /tasks/:id:", e); // Log no terminal para debug
+      console.error("Erro no GET /tasks/:id:", e);
       return fail(reply, 500, { message: "Erro interno ao buscar tarefa.", details: e.message });
     }
   });
@@ -79,7 +87,6 @@ export async function taskRoutes(app) {
       const parsed = parseBody(CreateTaskSchema, request.body);
       if (!parsed.ok) return fail(reply, 400, parsed.error);
 
-      // Garante posição
       const last = await app.prisma.task.findFirst({
         where: { projectId: parsed.data.projectId },
         orderBy: { position: "desc" },
