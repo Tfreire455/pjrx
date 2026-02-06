@@ -56,9 +56,7 @@ export function Project() {
           <TabsTrigger value="ai">IA Copilot</TabsTrigger>
         </TabsList>
 
-        <AnimatePresence mode="wait">
-          <motion.div key={tab} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} className="mt-4">
-            
+        <AnimatePresence mode="wait">  
             <TabsContent value="kanban">
               <div className="h-[calc(100vh-280px)] min-h-[500px]">
                 {tasksQ.isLoading ? <Skeleton className="h-full w-full"/> : 
@@ -86,8 +84,6 @@ export function Project() {
             <TabsContent value="ai">
               {project ? <AiProjectPanel workspaceId={workspaceId} project={project} /> : <Skeleton className="h-48"/>}
             </TabsContent>
-
-          </motion.div>
         </AnimatePresence>
       </Tabs>
 

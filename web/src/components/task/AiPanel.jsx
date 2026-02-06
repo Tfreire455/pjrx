@@ -7,7 +7,6 @@ import { Card, CardContent } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
 import { toast } from "sonner";
 
-// Adicionei projectId nas props
 export function AiPanel({ workspaceId, projectId, taskId, taskTitle, taskDescription }) {
   const [plan, setPlan] = useState(null);
   const qc = useQueryClient();
@@ -19,15 +18,15 @@ export function AiPanel({ workspaceId, projectId, taskId, taskTitle, taskDescrip
         method: "POST",
         body: {
           workspaceId,
-          // CORREÇÃO: Envia o projectId se existir, senão undefined (o backend aceita optional)
-          // Nunca envie strings curtas como "ignore"
-          projectId: projectId || undefined, 
+          // Envia projectId apenas se existir (evita erro 400 no backend)
+          projectId: projectId || undefined,
           feature: taskTitle,
           context: taskDescription || "Implementação padrão de software web."
         }
       });
     },
     onSuccess: (res) => {
+      // Extrai o resultado com segurança
       const data = res.result || res.data?.result;
       
       if (data && (data.steps?.length > 0 || data.risks?.length > 0)) {
@@ -40,32 +39,40 @@ export function AiPanel({ workspaceId, projectId, taskId, taskTitle, taskDescrip
     onError: (e) => toast.error(e.message || "Erro ao gerar plano")
   });
 
-  // 2. Adicionar Item à Checklist
+  // 2. Adicionar Item à Checklist (CORREÇÃO DE URL AQUI)
   const addChecklistItem = useMutation({
     mutationFn: async (content) => {
       let checklistId;
       
+      // Tenta pegar checklist existente do cache
       const taskData = qc.getQueryData(["task", workspaceId, taskId]);
       const checklists = taskData?.data?.task?.checklists || taskData?.task?.checklists || [];
       
       if (checklists.length > 0) {
         checklistId = checklists[0].id;
       } else {
-        const newList = await apiFetch("/checklists", {
+        // Se não existir, cria uma nova usando a URL COM WORKSPACEID
+        const res = await apiFetch(`/w/${workspaceId}/checklists`, {
           method: "POST",
-          body: { workspaceId, taskId, title: "Plano de Implementação" }
+          body: { taskId, title: "Plano de Implementação" }
         });
-        checklistId = newList.checklist.id;
+        checklistId = res.checklist?.id || res.data?.checklist?.id;
       }
 
-      return apiFetch(`/checklists/${checklistId}/items`, {
+      // Adiciona o item na URL correta COM WORKSPACEID
+      return apiFetch(`/w/${workspaceId}/checklists/${checklistId}/items`, {
         method: "POST",
-        body: { workspaceId, content }
+        body: { content } 
       });
     },
     onSuccess: () => {
+      // Atualiza a interface
       qc.invalidateQueries({ queryKey: ["task", workspaceId, taskId] });
       toast.success("Item adicionado à checklist!");
+    },
+    onError: (e) => {
+      console.error(e);
+      toast.error("Erro ao adicionar item: " + e.message);
     }
   });
 
