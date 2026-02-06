@@ -1,7 +1,7 @@
 import React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { cn } from "../../lib/cn"; // Ajuste o caminho se necessário
+import { cn } from "../../lib/cn"; 
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -60,7 +60,7 @@ const DialogTitle = React.forwardRef(({ className, ...props }, ref) => (
 ));
 DialogTitle.displayName = DialogPrimitive.Title.displayName;
 
-// ADICIONADO: DialogDescription para acessibilidade
+// ADIÇÃO: O componente Description necessário
 const DialogDescription = React.forwardRef(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}

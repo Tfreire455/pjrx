@@ -4,8 +4,7 @@ import { ptBR } from "date-fns/locale";
 import { Send, User } from "lucide-react";
 import { Button } from "../ui/button";
 import { toast } from "sonner";
-// Importação corrigida
-import { useCreateComment } from "../../hooks/useCreateComment"; 
+import { useCreateComment } from "../../hooks/useCreateComment"; // Certifique-se que o caminho está correto
 
 export function CommentsPanel({ workspaceId, taskId, comments = [] }) {
   const [text, setText] = useState("");
@@ -24,14 +23,12 @@ export function CommentsPanel({ workspaceId, taskId, comments = [] }) {
     }
   }
 
-  // Ordenar com segurança (mais recentes primeiro)
   const safeComments = Array.isArray(comments) 
     ? [...comments].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     : [];
 
   return (
     <div className="space-y-4">
-      {/* Input */}
       <form onSubmit={handleSubmit} className="flex gap-2">
         <input 
           className="flex-1 bg-white/5 rounded-md px-3 py-2 text-sm text-text focus:outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted/50"
@@ -42,14 +39,12 @@ export function CommentsPanel({ workspaceId, taskId, comments = [] }) {
         <Button 
           type="submit" 
           size="icon" 
-          // Correção do erro 'isPending of undefined':
           disabled={!text.trim() || createComment.isPending}
         >
           <Send size={16} />
         </Button>
       </form>
 
-      {/* Lista */}
       <div className="space-y-4 pt-2">
         {safeComments.length === 0 ? (
           <div className="text-center text-xs text-muted py-4">Nenhum comentário ainda.</div>

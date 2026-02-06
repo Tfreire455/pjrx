@@ -6,14 +6,12 @@ export function useCreateComment(workspaceId) {
 
   return useMutation({
     mutationFn: async ({ taskId, content }) => {
-      // POST /w/:wid/tasks/:tid/comments
       return apiFetch(`/w/${workspaceId}/comments`, {
         method: "POST",
         body: { taskId, content }
       });
     },
     onSuccess: (_, vars) => {
-      // Invalida a tarefa para recarregar os comentários
       qc.invalidateQueries({ queryKey: ["task", workspaceId, vars.taskId] });
     }
   });
