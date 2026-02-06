@@ -1,20 +1,20 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../lib/api";
 
-export function useCreateComment(workspaceId, taskId) {
+export function useCreateComment(workspaceId) {
   const qc = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ content }) => {
+    mutationFn: async ({ taskId, content }) => {
+      // POST /w/:wid/tasks/:tid/comments
       return apiFetch(`/w/${workspaceId}/comments`, {
         method: "POST",
-        body: { taskId, body: content } // Backend espera 'body', não 'content'
+        body: { taskId, content }
       });
     },
-    onSuccess: () => {
-      // O backend retorna comentários em queries de task ou lista de comments
-      qc.invalidateQueries({ queryKey: ["comments", workspaceId, taskId] });
-      qc.invalidateQueries({ queryKey: ["task", workspaceId, taskId] });
+    onSuccess: (_, vars) => {
+      // Invalida a tarefa para recarregar os comentários
+      qc.invalidateQueries({ queryKey: ["task", workspaceId, vars.taskId] });
     }
   });
 }
