@@ -5,16 +5,22 @@ import { z } from "zod";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
+// IMPORTAÇÃO MOVIDA PARA DENTRO DO COMPONENTE
+import { useCreateProject } from "../../hooks/useProjects";
 
 const Schema = z.object({
   name: z.string().min(2, "Nome é obrigatório (min 2 chars)"),
   description: z.string().optional()
 });
 
-export function CreateProjectModal({ open, onClose, createProject }) {
+// Agora recebe workspaceId em vez da mutation pronta
+export function CreateProjectModal({ open, onClose, workspaceId }) {
   const { register, handleSubmit, reset, formState: { errors } } = useForm({
     resolver: zodResolver(Schema)
   });
+
+  // O hook roda aqui dentro, garantindo que "createProject" sempre exista
+  const createProject = useCreateProject(workspaceId);
 
   async function onSubmit(data) {
     try {
@@ -26,6 +32,9 @@ export function CreateProjectModal({ open, onClose, createProject }) {
       toast.error(e.message || "Erro ao criar projeto");
     }
   }
+
+  // Fallback seguro se por acaso a mutation falhar ao inicializar (raro)
+  const isPending = createProject?.isPending || false;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -58,8 +67,8 @@ export function CreateProjectModal({ open, onClose, createProject }) {
 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button form="create-project-form" disabled={createProject.isPending}>
-            {createProject.isPending ? "Criando..." : "Criar Projeto"}
+          <Button form="create-project-form" disabled={isPending}>
+            {isPending ? "Criando..." : "Criar Projeto"}
           </Button>
         </DialogFooter>
       </DialogContent>

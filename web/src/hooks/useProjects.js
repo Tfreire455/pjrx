@@ -10,7 +10,6 @@ export function useProjects(workspaceId) {
   });
 }
 
-// Hook de criação que faltava
 export function useCreateProject(workspaceId) {
   const qc = useQueryClient();
   return useMutation({
@@ -22,7 +21,6 @@ export function useCreateProject(workspaceId) {
       } 
     }),
     onSuccess: () => {
-      // Atualiza a lista automaticamente após criar
       qc.invalidateQueries({ queryKey: ["projects", workspaceId] });
     }
   });

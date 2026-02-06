@@ -1,101 +1,148 @@
-import React, { useState, useMemo } from "react";
-import { Plus, Calendar, Target, CheckCircle2, PlayCircle, StopCircle } from "lucide-react";
-import { toast } from "sonner";
-import { useSprints, useCreateSprint, useUpdateSprint } from "../../hooks/useSprints";
+import React, { useState } from "react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { Calendar, Target, Plus, ChevronRight, CheckCircle2 } from "lucide-react";
+import { useSprints, useCreateSprint } from "../../hooks/useSprints";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
-import { Badge } from "../ui/badge";
 import { Skeleton } from "../ui/skeleton";
-
-function extractSprints(res) {
-  if (!res) return [];
-  if (res.sprints && Array.isArray(res.sprints)) return res.sprints;
-  if (res.data && res.data.sprints && Array.isArray(res.data.sprints)) return res.data.sprints;
-  return Array.isArray(res) ? res : [];
-}
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
+import { toast } from "sonner";
 
 export function SprintBoard({ workspaceId, projectId }) {
-  const sprintsQ = useSprints(workspaceId, projectId);
+  const { data, isLoading } = useSprints(workspaceId, projectId);
   const createSprint = useCreateSprint(workspaceId);
-  const updateSprint = useUpdateSprint(workspaceId); // Hook de update
   
-  const [isCreating, setCreating] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [newSprint, setNewSprint] = useState({ name: "", goal: "", duration: 14 });
 
-  const sprints = useMemo(() => extractSprints(sprintsQ.data), [sprintsQ.data]);
+  const sprints = data?.sprints || [];
 
-  // Criação Manual
-  async function handleCreate() {
-    const name = window.prompt("Nome da Sprint:");
-    if (!name) return;
-    setCreating(true);
+  async function handleCreate(e) {
+    e.preventDefault();
     try {
-      const start = new Date();
-      const end = new Date(); 
-      end.setDate(end.getDate() + 14);
-      await createSprint.mutateAsync({ projectId, name, startAt: start.toISOString(), endAt: end.toISOString() });
+      const startAt = new Date();
+      const endAt = new Date();
+      endAt.setDate(endAt.getDate() + parseInt(newSprint.duration));
+
+      await createSprint.mutateAsync({
+        projectId,
+        name: newSprint.name,
+        goal: newSprint.goal,
+        startAt: startAt.toISOString(),
+        endAt: endAt.toISOString()
+      });
+      setIsModalOpen(false);
+      setNewSprint({ name: "", goal: "", duration: 14 });
       toast.success("Sprint criada!");
-    } catch { toast.error("Erro ao criar"); }
-    finally { setCreating(false); }
+    } catch (e) {
+      toast.error("Erro ao criar sprint");
+    }
   }
 
-  // Atualizar Status (Progresso)
-  async function handleStatus(sprint, newStatus) {
-    try {
-      await updateSprint.mutateAsync({ id: sprint.id, status: newStatus });
-      toast.success(`Sprint agora está ${newStatus}`);
-    } catch { toast.error("Erro ao atualizar sprint"); }
-  }
-
-  if (sprintsQ.isLoading) return <Skeleton className="h-40 w-full" />;
+  if (isLoading) return <Skeleton className="h-64 w-full" />;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-text">Sprints</h3>
-        <Button size="sm" onClick={handleCreate} disabled={isCreating}><Plus size={16} className="mr-2"/> Nova Sprint</Button>
+        <div>
+          <h3 className="text-lg font-semibold text-text">Sprints</h3>
+          <p className="text-sm text-muted">Gerencie ciclos de desenvolvimento.</p>
+        </div>
+        <Button size="sm" onClick={() => setIsModalOpen(true)} className="gap-2">
+          <Plus size={16} /> Nova Sprint
+        </Button>
       </div>
 
-      {sprints.length === 0 ? (
-        <div className="p-8 border border-dashed border-white/10 rounded-xl text-center text-muted text-sm">
-          Sem sprints. Use a IA para gerar ou crie uma manual.
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {sprints.map((s) => (
-            <Card key={s.id} className="relative overflow-hidden group">
-              <div className={`absolute top-0 left-0 w-1 h-full ${s.status === 'active' ? 'bg-primary' : s.status === 'completed' ? 'bg-green-500' : 'bg-white/10'}`} />
-              <CardContent className="pt-5 pl-5 pr-4 pb-4">
-                <div className="flex justify-between items-start mb-2">
-                  <div className="font-semibold text-text">{s.name}</div>
-                  <Badge tone={s.status === 'active' ? 'primary' : s.status === 'completed' ? 'success' : 'neutral'}>{s.status}</Badge>
-                </div>
-                
-                <div className="space-y-3 mt-4 text-xs text-muted">
-                  <div className="flex items-center gap-2 bg-white/5 p-1.5 rounded w-fit">
-                    <Calendar size={12} />
-                    <span>{new Date(s.startAt).toLocaleDateString()} - {new Date(s.endAt).toLocaleDateString()}</span>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {sprints.map((sprint) => {
+          const isActive = new Date() >= new Date(sprint.startAt) && new Date() <= new Date(sprint.endAt);
+          // Simulação de progresso (idealmente viria do backend como projects)
+          const progress = Math.floor(Math.random() * 100); 
+
+          return (
+            <Card key={sprint.id} className={`border-white/10 transition-all hover:border-primary/50 ${isActive ? 'bg-primary/5 border-primary/30' : 'bg-surface'}`}>
+              <CardContent className="p-5 space-y-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-lg text-text">{sprint.name}</h4>
+                      {isActive && <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full border border-green-500/30 uppercase font-bold tracking-wider">Ativa</span>}
+                    </div>
+                    <p className="text-xs text-muted flex items-center gap-1 mt-1">
+                      <Calendar size={12} />
+                      {format(new Date(sprint.startAt), "d MMM", { locale: ptBR })} - {format(new Date(sprint.endAt), "d MMM", { locale: ptBR })}
+                    </p>
                   </div>
-                  {s.goal && <div className="italic border-l-2 border-white/10 pl-2">{s.goal}</div>}
                 </div>
 
-                {/* Controles de Status */}
-                <div className="mt-4 flex gap-2 pt-3 border-t border-white/5 opacity-60 group-hover:opacity-100 transition">
-                  {s.status !== 'active' && s.status !== 'completed' && (
-                    <Button size="xs" variant="secondary" className="w-full" onClick={() => handleStatus(s, 'active')}>
-                      <PlayCircle size={14} className="mr-1"/> Iniciar
-                    </Button>
-                  )}
-                  {s.status === 'active' && (
-                    <Button size="xs" variant="secondary" className="w-full" onClick={() => handleStatus(s, 'completed')}>
-                      <CheckCircle2 size={14} className="mr-1"/> Concluir
-                    </Button>
-                  )}
+                <div className="bg-black/20 p-3 rounded-lg border border-white/5">
+                  <div className="flex items-start gap-2">
+                    <Target size={14} className="text-primary mt-0.5" />
+                    <p className="text-sm text-muted italic line-clamp-2">"{sprint.goal}"</p>
+                  </div>
                 </div>
+
+                {/* Barra de Progresso da Sprint */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs text-muted">
+                    <span>Progresso</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                    <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+                  </div>
+                </div>
+
+                <Button variant="ghost" className="w-full text-xs justify-between group h-8">
+                  Ver Tarefas <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                </Button>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      )}
+          );
+        })}
+        
+        {sprints.length === 0 && (
+          <div className="col-span-full py-12 text-center border border-dashed border-white/10 rounded-xl bg-white/5">
+            <p className="text-muted">Nenhuma sprint planejada.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Modal de Criação */}
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Planejar Nova Sprint</DialogTitle>
+            <DialogDescription>Defina o objetivo e a duração do ciclo.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreate} className="space-y-4 py-2">
+            <div>
+              <label className="text-xs text-muted uppercase">Nome</label>
+              <input className="w-full bg-white/5 border border-white/10 rounded p-2 text-text" 
+                value={newSprint.name} onChange={e => setNewSprint({...newSprint, name: e.target.value})} placeholder="Ex: Sprint 23" autoFocus />
+            </div>
+            <div>
+              <label className="text-xs text-muted uppercase">Objetivo (Goal)</label>
+              <textarea className="w-full bg-white/5 border border-white/10 rounded p-2 text-text h-20 resize-none" 
+                value={newSprint.goal} onChange={e => setNewSprint({...newSprint, goal: e.target.value})} placeholder="Ex: Implementar autenticação..." />
+            </div>
+            <div>
+              <label className="text-xs text-muted uppercase">Duração (Dias)</label>
+              <select className="w-full bg-white/5 border border-white/10 rounded p-2 text-text"
+                value={newSprint.duration} onChange={e => setNewSprint({...newSprint, duration: e.target.value})}>
+                <option value="7">1 Semana</option>
+                <option value="14">2 Semanas</option>
+                <option value="21">3 Semanas</option>
+                <option value="30">1 Mês</option>
+              </select>
+            </div>
+            <Button type="submit" className="w-full" disabled={createSprint.isPending}>
+              {createSprint.isPending ? "Criando..." : "Confirmar Sprint"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
