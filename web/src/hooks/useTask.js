@@ -5,8 +5,8 @@ export function useTask(workspaceId, taskId) {
   return useQuery({
     queryKey: ["task", workspaceId, taskId],
     enabled: Boolean(workspaceId && taskId),
-    // CORREÇÃO: Rota correta /w/:id/tasks/:id
+    // A rota DEVE ser /w/:id/tasks/:id
     queryFn: () => apiFetch(`/w/${workspaceId}/tasks/${taskId}`),
-    staleTime: 5000
+    staleTime: 1000 * 5 // 5 segundos de cache
   });
 }

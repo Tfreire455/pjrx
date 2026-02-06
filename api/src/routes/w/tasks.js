@@ -37,6 +37,7 @@ export async function taskRoutes(app) {
   });
 
   // 2. DETALHES DA TAREFA (GET /tasks/:taskId)
+  // CORREÇÃO: Incluindo 'checklists' e 'items' na resposta
   app.get("/tasks/:taskId", async (request, reply) => {
     try {
       const task = await app.prisma.task.findFirst({
@@ -46,26 +47,21 @@ export async function taskRoutes(app) {
         },
         include: {
           subtasks: { orderBy: { position: "asc" } },
+          // AQUI ESTAVA FALTANDO OU INCOMPLETO:
           checklists: { 
-            include: { items: { orderBy: { position: "asc" } } } 
+            orderBy: { createdAt: "asc" },
+            include: { 
+              items: { orderBy: { position: "asc" } } 
+            } 
           },
           comments: { 
             orderBy: { createdAt: "desc" },
             include: { author: { select: { id: true, name: true } } } 
           },
-          // --- CORREÇÃO AQUI ---
-          // O nome correto da relação no seu schema é 'dependsOn' e não 'dependsOnTask'
-          dependenciesFrom: { 
-            include: { 
-              dependsOn: true // <--- CORRIGIDO
-            } 
-          },
-          dependenciesTo: { 
-            include: { 
-              task: true 
-            } 
-          },
-          // ---------------------
+          // Verifica se seu schema usa 'dependsOn' ou 'dependsOnTask' na relation
+          dependenciesFrom: { include: { dependsOn: true } }, 
+          dependenciesTo: { include: { task: true } },
+          
           assignee: { select: { id: true, name: true } },
           reporter: { select: { id: true, name: true } }
         }

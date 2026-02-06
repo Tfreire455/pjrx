@@ -47,12 +47,10 @@ function SortableTask({ task, onClick }) {
   );
 }
 
-export function KanbanBoard({ tasks, onOpenTask, onMoveTask }) {
-  // Estado local sincronizado com props para feedback imediato
+export function KanbanBoard({ tasks = [], onOpenTask, onMoveTask }) {
   const [activeId, setActiveId] = useState(null);
   const [localTasks, setLocalTasks] = useState(tasks);
 
-  // Atualiza localTasks sempre que o servidor mandar dados novos
   useEffect(() => {
     setLocalTasks(tasks);
   }, [tasks]);
@@ -64,12 +62,13 @@ export function KanbanBoard({ tasks, onOpenTask, onMoveTask }) {
 
   const tasksByStatus = useMemo(() => {
     const map = { todo: [], doing: [], blocked: [], done: [] };
-    // Garante array
+    // Proteção: garante que é array e filtra itens inválidos
     const list = Array.isArray(localTasks) ? localTasks : [];
     
     list.forEach((t) => {
-      if (map[t.status]) map[t.status].push(t);
-      else map.todo.push(t); // Fallback
+      // Se a task não tiver status válido, joga em todo
+      const status = map[t.status] ? t.status : 'todo';
+      map[status].push(t);
     });
     return map;
   }, [localTasks]);
@@ -96,26 +95,20 @@ export function KanbanBoard({ tasks, onOpenTask, onMoveTask }) {
 
     if (!isActiveTask) return;
 
-    // Cenário 1: Arrastando sobre outra tarefa
     if (isActiveTask && isOverTask) {
       setLocalTasks((items) => {
         const activeIndex = items.findIndex((t) => t.id === activeId);
         const overIndex = items.findIndex((t) => t.id === overId);
 
         if (items[activeIndex].status !== items[overIndex].status) {
-          // Mudou de coluna visualmente durante o drag
           const newItems = [...items];
-          newItems[activeIndex] = { 
-            ...newItems[activeIndex], 
-            status: items[overIndex].status 
-          };
-          return arrayMove(newItems, activeIndex, overIndex - 1); // Ajuste visual simples
+          newItems[activeIndex] = { ...newItems[activeIndex], status: items[overIndex].status };
+          return arrayMove(newItems, activeIndex, overIndex - 1);
         }
         return arrayMove(items, activeIndex, overIndex);
       });
     }
 
-    // Cenário 2: Arrastando sobre uma coluna vazia
     const isOverColumn = COLS.some(c => c.id === overId);
     if (isActiveTask && isOverColumn) {
       setLocalTasks((items) => {
@@ -137,22 +130,19 @@ export function KanbanBoard({ tasks, onOpenTask, onMoveTask }) {
     if (!over) return;
 
     const activeTask = findTask(active.id);
+    if (!activeTask) return;
+
     const overId = over.id;
-    
-    // Se soltou numa coluna
     const isOverColumn = COLS.some(c => c.id === overId);
     let newStatus = activeTask.status;
 
     if (isOverColumn) {
       newStatus = overId;
     } else {
-      // Soltou sobre uma tarefa
       const overTask = findTask(overId);
       if (overTask) newStatus = overTask.status;
     }
 
-    // Chama a API apenas se o status mudou (para este caso simples)
-    // Para ordenação real, precisaríamos enviar o novo index também
     if (activeTask.status !== newStatus) {
       onMoveTask({ taskId: activeTask.id, status: newStatus });
     }
@@ -172,11 +162,13 @@ export function KanbanBoard({ tasks, onOpenTask, onMoveTask }) {
         {COLS.map((col) => (
           <KanbanColumn key={col.id} id={col.id} title={col.title} tone={col.tone} tasks={tasksByStatus[col.id]}>
             <SortableContext 
-              items={tasksByStatus[col.id].map(t => t.id)} 
+              // Proteção contra IDs nulos/vazios no SortableContext
+              items={tasksByStatus[col.id].map(t => t.id).filter(Boolean)} 
               strategy={verticalListSortingStrategy}
             >
-              {tasksByStatus[col.id].map((task) => (
-                <SortableTask key={task.id} task={task} onClick={() => onOpenTask(task.id)} />
+              {tasksByStatus[col.id].map((task, index) => (
+                // Use task.id, mas tenha fallback para index se vier vazio
+                <SortableTask key={task.id || `task-${index}`} task={task} onClick={() => onOpenTask(task.id)} />
               ))}
             </SortableContext>
           </KanbanColumn>

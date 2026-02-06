@@ -2,19 +2,12 @@ import { ok, fail } from "../../utils/http.js";
 import { parseBody } from "../../utils/validation.js";
 import { z } from "zod";
 import { requireRole } from "../../middlewares/requireRole.js";
-import { audit } from "../../services/audit.js";
 
 // --- Schemas Locais ---
 const CreateTemplateSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   items: z.array(z.string()).default([])
-});
-
-const UpdateTemplateSchema = z.object({
-  name: z.string().optional(),
-  description: z.string().optional(),
-  items: z.array(z.string()).optional()
 });
 
 const CreateChecklistSchema = z.object({
@@ -40,7 +33,6 @@ export async function checklistRoutes(app) {
   // TEMPLATES (Model: ChecklistTemplate)
   // =================================================================
 
-  // GET /checklist-templates
   app.get("/checklist-templates", async (request, reply) => {
     const templates = await app.prisma.checklistTemplate.findMany({
       where: { workspaceId: request.workspaceId },
@@ -49,7 +41,6 @@ export async function checklistRoutes(app) {
     return ok(reply, { templates });
   });
 
-  // POST /checklist-templates
   app.post("/checklist-templates", { preHandler: requireRole("member") }, async (request, reply) => {
     const parsed = parseBody(CreateTemplateSchema, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
@@ -67,7 +58,6 @@ export async function checklistRoutes(app) {
     return ok(reply, { template: tpl }, 201);
   });
 
-  // DELETE /checklist-templates/:id
   app.delete("/checklist-templates/:id", { preHandler: requireRole("admin") }, async (request, reply) => {
     await app.prisma.checklistTemplate.deleteMany({
       where: { id: request.params.id, workspaceId: request.workspaceId }
@@ -85,20 +75,18 @@ export async function checklistRoutes(app) {
     const parsed = parseBody(CreateChecklistSchema, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
 
-    // 1. Verifica se a tarefa existe no workspace
+    // 1. Verifica se a tarefa existe
     const task = await app.prisma.task.findFirst({
       where: { id: parsed.data.taskId, workspaceId: request.workspaceId }
     });
     if (!task) return fail(reply, 404, { message: "Tarefa não encontrada" });
 
-    // 2. Cria a checklist (Usando o model Checklist correto)
+    // 2. Cria a checklist (CORREÇÃO: usa app.prisma.checklist)
     const checklist = await app.prisma.checklist.create({
       data: {
         workspaceId: request.workspaceId,
         taskId: task.id,
-        title: parsed.data.title,
-        // Se seu schema usa 'position', mantenha. Se não, remova esta linha.
-        // position: 0 
+        title: parsed.data.title
       }
     });
 
@@ -121,7 +109,7 @@ export async function checklistRoutes(app) {
       }
     }
 
-    // Retorna completa
+    // Retorna completa com itens
     const full = await app.prisma.checklist.findUnique({
       where: { id: checklist.id },
       include: { items: { orderBy: { position: "asc" } } }
