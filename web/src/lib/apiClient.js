@@ -15,7 +15,12 @@ async function refreshToken() {
     .then(async (res) => {
       const text = await res.text();
       // Tenta fazer o parse, mas se falhar, retorna null
-      const json = text ? JSON.parse(text).catch(() => null) : null;
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
 
       if (!res.ok) {
         // Se o refresh falhou (400, 401, etc), a sessão morreu.

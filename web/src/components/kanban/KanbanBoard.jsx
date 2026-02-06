@@ -1,40 +1,25 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   DndContext,
   PointerSensor,
   KeyboardSensor,
   useSensor,
   useSensors,
-  closestCenter
+  closestCorners,
+  DragOverlay
 } from "@dnd-kit/core";
 import {
   arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
   useSortable
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { createPortal } from "react-dom";
 
 import { KanbanColumn } from "./KanbanColumn";
 import { TaskCard } from "./TaskCard";
-
-function SortableTask({ task, onClick }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: task.id,
-    data: { task }
-  });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition
-  };
-
-  return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <TaskCard task={task} onClick={onClick} dragging={isDragging} />
-    </div>
-  );
-}
 
 const COLS = [
   { id: "todo", title: "To do", tone: "neutral" },
@@ -43,97 +28,171 @@ const COLS = [
   { id: "done", title: "Done", tone: "success" }
 ];
 
+function SortableTask({ task, onClick }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: task.id,
+    data: { type: "Task", task }
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="mb-3 touch-none">
+      <TaskCard task={task} onClick={onClick} />
+    </div>
+  );
+}
+
 export function KanbanBoard({ tasks, onOpenTask, onMoveTask }) {
-  const [local, setLocal] = useState(null); // lista local p/ reordenação rápida no front
+  // Estado local sincronizado com props para feedback imediato
+  const [activeId, setActiveId] = useState(null);
+  const [localTasks, setLocalTasks] = useState(tasks);
+
+  // Atualiza localTasks sempre que o servidor mandar dados novos
+  useEffect(() => {
+    setLocalTasks(tasks);
+  }, [tasks]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const data = local || tasks;
-
-  const byStatus = useMemo(() => {
+  const tasksByStatus = useMemo(() => {
     const map = { todo: [], doing: [], blocked: [], done: [] };
-    for (const t of data) map[t.status]?.push(t);
+    // Garante array
+    const list = Array.isArray(localTasks) ? localTasks : [];
+    
+    list.forEach((t) => {
+      if (map[t.status]) map[t.status].push(t);
+      else map.todo.push(t); // Fallback
+    });
     return map;
-  }, [data]);
-
-  function setFromTasks(nextTasks) {
-    setLocal(nextTasks);
-    // libera local depois (evita drift). Pode ajustar.
-    window.clearTimeout(window.__prjxKanbanReset);
-    window.__prjxKanbanReset = window.setTimeout(() => setLocal(null), 400);
-  }
+  }, [localTasks]);
 
   function findTask(id) {
-    return data.find((t) => t.id === id);
+    return localTasks.find((t) => t.id === id);
   }
 
-  function onDragEnd(event) {
+  function handleDragStart(event) {
+    setActiveId(event.active.id);
+  }
+
+  function handleDragOver(event) {
     const { active, over } = event;
     if (!over) return;
 
     const activeId = active.id;
     const overId = over.id;
 
-    const activeTask = findTask(activeId);
-    if (!activeTask) return;
+    if (activeId === overId) return;
 
-    // Caso 1: drop em coluna (overId é status)
-    const overIsColumn = COLS.some((c) => c.id === overId);
-    if (overIsColumn) {
-      if (activeTask.status === overId) return;
+    const isActiveTask = active.data.current?.type === "Task";
+    const isOverTask = over.data.current?.type === "Task";
 
-      const next = data.map((t) => (t.id === activeId ? { ...t, status: overId } : t));
-      setFromTasks(next);
-      onMoveTask?.({ taskId: activeId, status: overId });
-      return;
+    if (!isActiveTask) return;
+
+    // Cenário 1: Arrastando sobre outra tarefa
+    if (isActiveTask && isOverTask) {
+      setLocalTasks((items) => {
+        const activeIndex = items.findIndex((t) => t.id === activeId);
+        const overIndex = items.findIndex((t) => t.id === overId);
+
+        if (items[activeIndex].status !== items[overIndex].status) {
+          // Mudou de coluna visualmente durante o drag
+          const newItems = [...items];
+          newItems[activeIndex] = { 
+            ...newItems[activeIndex], 
+            status: items[overIndex].status 
+          };
+          return arrayMove(newItems, activeIndex, overIndex - 1); // Ajuste visual simples
+        }
+        return arrayMove(items, activeIndex, overIndex);
+      });
     }
 
-    // Caso 2: drop em outra task -> inferir status do "over task"
-    const overTask = findTask(overId);
-    if (!overTask) return;
-
-    const fromStatus = activeTask.status;
-    const toStatus = overTask.status;
-
-    // muda status se necessário
-    let next = data.map((t) => (t.id === activeId ? { ...t, status: toStatus } : t));
-
-    // reordena dentro do status do destino
-    const inTarget = next.filter((t) => t.status === toStatus);
-    const others = next.filter((t) => t.status !== toStatus);
-
-    const oldIndex = inTarget.findIndex((t) => t.id === activeId);
-    const newIndex = inTarget.findIndex((t) => t.id === overId);
-
-    if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-      const moved = arrayMove(inTarget, oldIndex, newIndex);
-      next = [...others, ...moved];
-    }
-
-    setFromTasks(next);
-
-    if (fromStatus !== toStatus) {
-      onMoveTask?.({ taskId: activeId, status: toStatus });
+    // Cenário 2: Arrastando sobre uma coluna vazia
+    const isOverColumn = COLS.some(c => c.id === overId);
+    if (isActiveTask && isOverColumn) {
+      setLocalTasks((items) => {
+        const activeIndex = items.findIndex((t) => t.id === activeId);
+        if (items[activeIndex].status !== overId) {
+           const newItems = [...items];
+           newItems[activeIndex] = { ...newItems[activeIndex], status: overId };
+           return arrayMove(newItems, activeIndex, activeIndex); 
+        }
+        return items;
+      });
     }
   }
 
+  function handleDragEnd(event) {
+    const { active, over } = event;
+    setActiveId(null);
+
+    if (!over) return;
+
+    const activeTask = findTask(active.id);
+    const overId = over.id;
+    
+    // Se soltou numa coluna
+    const isOverColumn = COLS.some(c => c.id === overId);
+    let newStatus = activeTask.status;
+
+    if (isOverColumn) {
+      newStatus = overId;
+    } else {
+      // Soltou sobre uma tarefa
+      const overTask = findTask(overId);
+      if (overTask) newStatus = overTask.status;
+    }
+
+    // Chama a API apenas se o status mudou (para este caso simples)
+    // Para ordenação real, precisaríamos enviar o novo index também
+    if (activeTask.status !== newStatus) {
+      onMoveTask({ taskId: activeTask.id, status: newStatus });
+    }
+  }
+
+  const activeTask = activeId ? findTask(activeId) : null;
+
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-      <div className="grid gap-4 lg:grid-cols-4">
-        {COLS.map((c) => (
-          <KanbanColumn key={c.id} id={c.id} title={c.title} tone={c.tone} tasks={byStatus[c.id] || []}>
-            {(byStatus[c.id] || []).map((t) => (
-              <SortableTask key={t.id} task={t} onClick={() => onOpenTask?.(t.id)} />
-            ))}
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCorners}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+    >
+      <div className="grid gap-4 lg:grid-cols-4 h-full items-start">
+        {COLS.map((col) => (
+          <KanbanColumn key={col.id} id={col.id} title={col.title} tone={col.tone} tasks={tasksByStatus[col.id]}>
+            <SortableContext 
+              items={tasksByStatus[col.id].map(t => t.id)} 
+              strategy={verticalListSortingStrategy}
+            >
+              {tasksByStatus[col.id].map((task) => (
+                <SortableTask key={task.id} task={task} onClick={() => onOpenTask(task.id)} />
+              ))}
+            </SortableContext>
           </KanbanColumn>
         ))}
       </div>
 
-      {/* SortableContext global evita warning quando arrastar */}
-      <SortableContext items={data.map((t) => t.id)} />
+      {createPortal(
+        <DragOverlay>
+          {activeTask && (
+            <div className="opacity-90 rotate-2 scale-105 cursor-grabbing">
+              <TaskCard task={activeTask} isOverlay />
+            </div>
+          )}
+        </DragOverlay>,
+        document.body
+      )}
     </DndContext>
   );
 }

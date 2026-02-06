@@ -1,200 +1,198 @@
 import { ok, fail } from "../../utils/http.js";
 import { parseBody } from "../../utils/validation.js";
+import { z } from "zod";
 import { requireRole } from "../../middlewares/requireRole.js";
-import { 
-  CreateChecklistTemplateSchema, 
-  UpdateChecklistTemplateSchema, 
-  CreateChecklistOnTaskSchema, 
-  AddChecklistItemSchema, 
-  UpdateChecklistItemSchema 
-} from "../../schemas/checklists.js";
 import { audit } from "../../services/audit.js";
 
+// --- Schemas Locais (para garantir funcionamento sem dependência externa quebrada) ---
+const CreateTemplateSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+  items: z.array(z.string()).default([])
+});
+
+const UpdateTemplateSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().optional(),
+  items: z.array(z.string()).optional()
+});
+
+const CreateChecklistSchema = z.object({
+  taskId: z.string().min(10),
+  title: z.string().default("Checklist"),
+  templateId: z.string().optional()
+});
+
+const CreateItemSchema = z.object({
+  content: z.string().min(1),
+  position: z.number().optional()
+});
+
+const UpdateItemSchema = z.object({
+  content: z.string().optional(),
+  done: z.boolean().optional(),
+  position: z.number().optional()
+});
+
 export async function checklistRoutes(app) {
-  // ===== Templates =====
+  
+  // =================================================================
+  // TEMPLATES (TaskChecklistTemplate)
+  // =================================================================
 
   // GET /checklist-templates
   app.get("/checklist-templates", async (request, reply) => {
-    const templates = await app.prisma.checklistTemplate.findMany({
+    const templates = await app.prisma.taskChecklistTemplate.findMany({
       where: { workspaceId: request.workspaceId },
       orderBy: { createdAt: "desc" }
     });
     return ok(reply, { templates });
   });
 
-  // GET /checklist-templates/:templateId
-  app.get("/checklist-templates/:templateId", async (request, reply) => {
-    const template = await app.prisma.checklistTemplate.findFirst({
-      where: { id: request.params.templateId, workspaceId: request.workspaceId }
-    });
-    if (!template) return fail(reply, 404, { code: "NOT_FOUND", message: "Template não encontrado." });
-    return ok(reply, { template });
-  });
-
   // POST /checklist-templates
   app.post("/checklist-templates", { preHandler: requireRole("member") }, async (request, reply) => {
-    const parsed = parseBody(CreateChecklistTemplateSchema, request.body);
+    const parsed = parseBody(CreateTemplateSchema, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
 
-    const tpl = await app.prisma.checklistTemplate.create({
+    const tpl = await app.prisma.taskChecklistTemplate.create({
       data: {
         workspaceId: request.workspaceId,
         name: parsed.data.name,
-        description: parsed.data.description || null,
-        items: parsed.data.items, // Array de strings
+        description: parsed.data.description,
+        items: parsed.data.items, // Array de strings no Postgres
         createdById: request.user.sub
       }
-    });
-
-    await audit(app, {
-      workspaceId: request.workspaceId,
-      actorId: request.user.sub,
-      action: "checklist.template.create",
-      entityType: "ChecklistTemplate",
-      entityId: tpl.id,
-      before: null,
-      after: tpl,
-      request
     });
 
     return ok(reply, { template: tpl }, 201);
   });
 
-  // PATCH /checklist-templates/:templateId
-  app.patch("/checklist-templates/:templateId", { preHandler: requireRole("member") }, async (request, reply) => {
-    const parsed = parseBody(UpdateChecklistTemplateSchema, request.body);
-    if (!parsed.ok) return fail(reply, 400, parsed.error);
-
-    const before = await app.prisma.checklistTemplate.findFirst({
-      where: { id: request.params.templateId, workspaceId: request.workspaceId }
+  // DELETE /checklist-templates/:id
+  app.delete("/checklist-templates/:id", { preHandler: requireRole("admin") }, async (request, reply) => {
+    await app.prisma.taskChecklistTemplate.deleteMany({
+      where: { id: request.params.id, workspaceId: request.workspaceId }
     });
-    if (!before) return fail(reply, 404, { code: "NOT_FOUND", message: "Template não encontrado." });
-
-    const updated = await app.prisma.checklistTemplate.update({
-      where: { id: before.id },
-      data: {
-        name: parsed.data.name ?? undefined,
-        description: parsed.data.description ?? undefined,
-        items: parsed.data.items ?? undefined
-      }
-    });
-
-    await audit(app, {
-      workspaceId: request.workspaceId,
-      actorId: request.user.sub,
-      action: "checklist.template.update",
-      entityType: "ChecklistTemplate",
-      entityId: updated.id,
-      before,
-      after: updated,
-      request
-    });
-
-    return ok(reply, { template: updated });
+    return ok(reply, { message: "Template removido" });
   });
 
-  // DELETE /checklist-templates/:templateId
-  app.delete("/checklist-templates/:templateId", { preHandler: requireRole("admin") }, async (request, reply) => {
-    const before = await app.prisma.checklistTemplate.findFirst({
-      where: { id: request.params.templateId, workspaceId: request.workspaceId }
-    });
-    if (!before) return fail(reply, 404, { code: "NOT_FOUND", message: "Template não encontrado." });
 
-    await app.prisma.checklistTemplate.delete({ where: { id: before.id } });
+  // =================================================================
+  // CHECKLISTS NA TAREFA (TaskChecklist)
+  // =================================================================
 
-    await audit(app, {
-      workspaceId: request.workspaceId,
-      actorId: request.user.sub,
-      action: "checklist.template.delete",
-      entityType: "ChecklistTemplate",
-      entityId: before.id,
-      before,
-      after: null,
-      request
-    });
-
-    return ok(reply, { message: "Template removido." });
-  });
-
-  // ===== Checklist em Task =====
-
+  // POST /checklists (Cria uma lista dentro da tarefa)
   app.post("/checklists", { preHandler: requireRole("member") }, async (request, reply) => {
-    const parsed = parseBody(CreateChecklistOnTaskSchema, request.body);
+    const parsed = parseBody(CreateChecklistSchema, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
 
-    const task = await app.prisma.task.findFirst({ where: { id: parsed.data.taskId, workspaceId: request.workspaceId } });
-    if (!task) return fail(reply, 404, { code: "NOT_FOUND", message: "Tarefa não encontrada." });
+    // 1. Verifica se a tarefa existe no workspace
+    const task = await app.prisma.task.findFirst({
+      where: { id: parsed.data.taskId, workspaceId: request.workspaceId }
+    });
+    if (!task) return fail(reply, 404, { message: "Tarefa não encontrada" });
 
-    const checklist = await app.prisma.checklist.create({
+    // 2. Cria a checklist
+    const checklist = await app.prisma.taskChecklist.create({
       data: {
         workspaceId: request.workspaceId,
         taskId: task.id,
         title: parsed.data.title,
-        templateId: parsed.data.templateId || null
+        position: 0
       }
     });
 
+    // 3. Se tiver template, popula os itens
     if (parsed.data.templateId) {
-      const tpl = await app.prisma.checklistTemplate.findFirst({ where: { id: parsed.data.templateId, workspaceId: request.workspaceId } });
-      if (tpl?.items && Array.isArray(tpl.items)) {
+      const tpl = await app.prisma.taskChecklistTemplate.findFirst({
+        where: { id: parsed.data.templateId, workspaceId: request.workspaceId }
+      });
+
+      if (tpl && tpl.items?.length > 0) {
         await app.prisma.checklistItem.createMany({
-          data: tpl.items.map((content, idx) => ({
+          data: tpl.items.map((text, i) => ({
             workspaceId: request.workspaceId,
             checklistId: checklist.id,
-            content: String(content),
-            position: idx,
+            content: text,
+            position: i,
             done: false
           }))
         });
       }
     }
 
-    const full = await app.prisma.checklist.findUnique({
+    // Retorna completa
+    const full = await app.prisma.taskChecklist.findUnique({
       where: { id: checklist.id },
       include: { items: { orderBy: { position: "asc" } } }
-    });
-
-    await audit(app, {
-      workspaceId: request.workspaceId,
-      actorId: request.user.sub,
-      action: "checklist.create",
-      entityType: "Checklist",
-      entityId: checklist.id,
-      before: null,
-      after: full,
-      request
     });
 
     return ok(reply, { checklist: full }, 201);
   });
 
-  app.post("/checklists/:checklistId/items", { preHandler: requireRole("member") }, async (request, reply) => {
-    const parsed = parseBody(AddChecklistItemSchema, request.body);
-    if (!parsed.ok) return fail(reply, 400, parsed.error);
-    const checklist = await app.prisma.checklist.findFirst({ where: { id: request.params.checklistId, workspaceId: request.workspaceId } });
-    if (!checklist) return fail(reply, 404, { code: "NOT_FOUND", message: "Checklist não encontrado." });
-    const item = await app.prisma.checklistItem.create({
-      data: { workspaceId: request.workspaceId, checklistId: checklist.id, content: parsed.data.content, position: parsed.data.position ?? 0 }
+  // DELETE /checklists/:id
+  app.delete("/checklists/:id", { preHandler: requireRole("member") }, async (request, reply) => {
+    await app.prisma.taskChecklist.deleteMany({
+      where: { id: request.params.id, workspaceId: request.workspaceId }
     });
+    return ok(reply, { message: "Checklist removida" });
+  });
+
+
+  // =================================================================
+  // ITENS (ChecklistItem)
+  // =================================================================
+
+  // POST /checklists/:id/items
+  app.post("/checklists/:id/items", { preHandler: requireRole("member") }, async (request, reply) => {
+    const parsed = parseBody(CreateItemSchema, request.body);
+    if (!parsed.ok) return fail(reply, 400, parsed.error);
+
+    const checklist = await app.prisma.taskChecklist.findFirst({
+      where: { id: request.params.id, workspaceId: request.workspaceId }
+    });
+    if (!checklist) return fail(reply, 404, { message: "Checklist não encontrada" });
+
+    const item = await app.prisma.checklistItem.create({
+      data: {
+        workspaceId: request.workspaceId,
+        checklistId: checklist.id,
+        content: parsed.data.content,
+        position: parsed.data.position || 65000,
+        done: false
+      }
+    });
+
     return ok(reply, { item }, 201);
   });
 
+  // PATCH /checklist-items/:itemId
   app.patch("/checklist-items/:itemId", { preHandler: requireRole("member") }, async (request, reply) => {
-    const parsed = parseBody(UpdateChecklistItemSchema, request.body || {});
+    const parsed = parseBody(UpdateItemSchema, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
-    const before = await app.prisma.checklistItem.findFirst({ where: { id: request.params.itemId, workspaceId: request.workspaceId } });
-    if (!before) return fail(reply, 404, { code: "NOT_FOUND", message: "Item não encontrado." });
+
+    // Verifica propriedade
+    const before = await app.prisma.checklistItem.findFirst({
+      where: { id: request.params.itemId, workspaceId: request.workspaceId }
+    });
+    if (!before) return fail(reply, 404, { message: "Item não encontrado" });
+
     const updated = await app.prisma.checklistItem.update({
       where: { id: before.id },
-      data: { content: parsed.data.content, done: parsed.data.done, position: parsed.data.position }
+      data: {
+        content: parsed.data.content,
+        done: parsed.data.done,
+        position: parsed.data.position
+      }
     });
+
     return ok(reply, { item: updated });
   });
 
+  // DELETE /checklist-items/:itemId
   app.delete("/checklist-items/:itemId", { preHandler: requireRole("member") }, async (request, reply) => {
-    const before = await app.prisma.checklistItem.findFirst({ where: { id: request.params.itemId, workspaceId: request.workspaceId } });
-    if (!before) return fail(reply, 404, { code: "NOT_FOUND", message: "Item não encontrado." });
-    await app.prisma.checklistItem.delete({ where: { id: before.id } });
-    return ok(reply, { message: "Item removido." });
+    await app.prisma.checklistItem.deleteMany({
+      where: { id: request.params.itemId, workspaceId: request.workspaceId }
+    });
+    return ok(reply, { message: "Item removido" });
   });
 }
