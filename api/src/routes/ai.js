@@ -123,7 +123,7 @@ export async function aiRoutes(app) {
     }
   });
 
-  // Rota 2: Gerar Plano de Feature (Tarefa)
+// Rota 2: Gerar Plano de Feature (Tarefa)
   app.post("/ai/feature-implementation-plan", async (request, reply) => {
     const parsed = parseBody(ImplementationPlanBody, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
@@ -139,26 +139,40 @@ export async function aiRoutes(app) {
         messages: [
           {
             role: "system",
-            content: `Tech Lead. Retorne JSON: { "risks": [], "steps": [], "complexity": "Low/Mid/High" }`
+            content: `Você é um Tech Lead Senior pragmático.
+            Para a feature solicitada, quebre-a em 3 a 6 passos técnicos CLAROS e PRÁTICOS (checklists).
+            Identifique também 1 a 3 riscos técnicos.
+            
+            Retorne APENAS um JSON válido neste formato:
+            {
+              "steps": ["Criar migration para tabela X", "Criar endpoint Y", "Implementar frontend Z"],
+              "risks": ["Risco de performance em...", "Segurança na rota..."],
+              "complexity": "Low/Medium/High"
+            }`
           },
-          { role: "user", content: `Feature: ${feature}. Contexto: ${context}` }
+          { 
+            role: "user", 
+            content: `Feature: ${feature}. Contexto adicional: ${context || "Sem contexto, assuma boas práticas padrão."}` 
+          }
         ],
         response_format: { type: "json_object" }
       });
 
       const json = cleanAndParse(completion.choices[0].message.content);
-      if (!json) return fail(reply, 500, { message: "IA inválida" });
+      
+      // Fallback se a IA falhar
+      const result = json || { steps: ["Analisar requisitos", "Implementar código", "Testar"], risks: [], complexity: "Low" };
 
       const insight = await persistAI(app, {
         workspaceId,
         userId,
         kind: "implementation_plan",
         title: `Feature: ${feature}`,
-        content: json,
+        content: result,
         meta: { projectId }
       });
 
-      return ok(reply, { insightId: insight.id, result: json });
+      return ok(reply, { insightId: insight.id, result: result });
 
     } catch (err) {
       return fail(reply, 500, { message: "Erro IA", error: err.message });

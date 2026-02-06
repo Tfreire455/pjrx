@@ -1,134 +1,138 @@
-import React, { useMemo, useState } from "react";
-import { Drawer } from "../../components/ui/drawer"; // Ajuste o caminho se necessário
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs";
+import React, { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { X, Calendar as CalIcon, User } from "lucide-react";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetClose } from "../ui/drawer"; // Ajuste o import conforme seu UI kit (pode ser Sheet ou Drawer)
+import { Dialog, DialogContent } from "../ui/dialog"; // Fallback se não tiver Sheet
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../ui/tabs";
+import { Skeleton } from "../ui/skeleton";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { toast } from "sonner";
 
-import { useChecklist } from "../../hooks/useChecklist";
-import { useToggleChecklistItem } from "../../hooks/useToggleChecklistItem";
-import { useComments } from "../../hooks/useComments";
-import { useCreateComment } from "../../hooks/useCreateComment";
-import { useAttachments } from "../../hooks/useAttachments";
-import { useDependencies } from "../../hooks/useDependencies";
-import { useAiTaskPlan } from "../../hooks/useAiTaskPlan";
-
-// Assumindo que os painéis estão na pasta 'panels' relativa a este componente
+// Paineis
+import { AiPanel } from "../task/AiPanel";
 import { ChecklistPanel } from "../task/ChecklistPanel";
 import { CommentsPanel } from "../task/CommentsPanel";
-import { AttachmentsPanel } from "../task/AttachmentsPanel";
-import { DependenciesPanel } from "../task/DependenciesPanel";
-import { AiPanel } from "../task/AiPanel";
+
+import { useUpdateTaskStatus } from "../../hooks/useUpdateTaskStatus";
+import { apiFetch } from "../../lib/api";
 
 export function TaskDrawer({ open, onClose, taskQuery, workspaceId }) {
-  // Backend retorna { task: ... }
-  const task = taskQuery?.data?.task || taskQuery?.data;
-  const taskId = task?.id;
+  const qc = useQueryClient();
+  const taskData = taskQuery.data?.task || taskQuery.data?.data?.task || null;
+  
+  // Estado local para edição rápida
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
 
-  const [tab, setTab] = useState("checklist");
+  // Sincroniza quando os dados chegam
+  useEffect(() => {
+    if (taskData) {
+      setTitle(taskData.title || "");
+      setDescription(taskData.description || "");
+    }
+  }, [taskData]);
 
-  const checklistQ = useChecklist(workspaceId, taskId);
-  const toggleItem = useToggleChecklistItem(workspaceId, taskId);
-
-  const commentsQ = useComments(workspaceId, taskId);
-  const createComment = useCreateComment(workspaceId, taskId);
-
-  const attachmentsQ = useAttachments(workspaceId, taskId);
-  const depsQ = useDependencies(workspaceId, taskId);
-
-  const aiPlan = useAiTaskPlan(workspaceId);
-
-  const tone = useMemo(() => {
-    if (!task) return "neutral";
-    if (task.status === "done") return "success";
-    if (task.status === "blocked") return "warning";
-    if (task.status === "doing") return "secondary";
-    return "neutral";
-  }, [task]);
-
-  function copyLink() {
+  // Função de Autosave (Salva ao sair do campo)
+  async function handleSave(field, value) {
+    if (!taskData) return;
     try {
-      navigator.clipboard.writeText(window.location.href);
-      toast.success("Link copiado!");
-    } catch {
-      toast.error("Não foi possível copiar.");
+      await apiFetch(`/w/${workspaceId}/tasks/${taskData.id}`, {
+        method: "PATCH",
+        body: { [field]: value }
+      });
+      qc.invalidateQueries({ queryKey: ["task", workspaceId, taskData.id] });
+      qc.invalidateQueries({ queryKey: ["tasks"] }); // Atualiza kanban
+      toast.success("Salvo!");
+    } catch (e) {
+      toast.error("Erro ao salvar.");
     }
   }
 
-  // Recebe o novo estado 'checked' do painel
-  function onToggle(itemId, checked) {
-    toggleItem.mutate({ itemId, checked });
+  // Se não tem task carregando, mostra skeleton
+  if (taskQuery.isLoading && open) {
+    return (
+      <Dialog open={open} onOpenChange={onClose}>
+        <DialogContent className="max-w-2xl h-[90vh] p-0 bg-surface border-white/10 flex flex-col">
+           <div className="p-6 space-y-4">
+             <Skeleton className="h-8 w-1/2" />
+             <Skeleton className="h-32 w-full" />
+           </div>
+        </DialogContent>
+      </Dialog>
+    );
   }
 
+  if (!taskData) return null;
+
   return (
-    <Drawer open={open} onClose={onClose} title="Tarefa">
-      {!task ? (
-        <div className="text-sm text-muted">Carregando tarefa...</div>
-      ) : (
-        <div className="space-y-4">
-          {/* Header */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-lg font-semibold text-text">{task.title}</div>
-              <div className="mt-1 text-sm text-muted">{task.description || "Sem descrição."}</div>
-            </div>
-            <Badge tone={tone} className="shrink-0">{task.status}</Badge>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-white/3 p-4 text-sm">
-              <div className="text-muted">Prazo</div>
-              <div className="text-text mt-1">
-                {task.dueAt ? new Date(task.dueAt).toLocaleString() : "—"}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/3 p-4 text-sm">
-              <div className="text-muted">Prioridade</div>
-              <div className="text-text mt-1 capitalize">{task.priority || "—"}</div>
-            </div>
-          </div>
-
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="fixed right-0 top-0 h-full w-full sm:max-w-xl md:max-w-2xl border-l border-white/10 bg-surface p-0 shadow-2xl transition-transform duration-300 data-[state=closed]:translate-x-full overflow-hidden flex flex-col">
+        
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-white/10">
           <div className="flex gap-2">
-            <Button variant="secondary" className="flex-1" onClick={copyLink}>
-              Copiar link
-            </Button>
-            <Button variant="ghost" className="flex-1" onClick={() => toast.message("Em breve: edição completa")}>
-              Editar
-            </Button>
+            <Badge variant="outline">{taskData.status}</Badge>
+            <Badge variant="outline" className="opacity-50">{taskData.priority}</Badge>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose}><X size={18} /></Button>
+        </div>
+
+        {/* Conteúdo Rolável */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          
+          {/* Título Editável */}
+          <div>
+            <input
+              className="w-full bg-transparent text-xl font-bold text-text focus:outline-none border-b border-transparent focus:border-primary/50 transition-colors pb-1 placeholder:text-muted/50"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => handleSave("title", title)}
+              placeholder="Título da tarefa"
+            />
           </div>
 
-          {/* Tabs internas */}
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="grid grid-cols-5">
-              <TabsTrigger tabValue="checklist">Checklist</TabsTrigger>
-              <TabsTrigger tabValue="comments">Comentários</TabsTrigger>
-              <TabsTrigger tabValue="deps">Deps</TabsTrigger>
-              <TabsTrigger tabValue="files">Anexos</TabsTrigger>
-              <TabsTrigger tabValue="ai">IA</TabsTrigger>
+          {/* Descrição Editável */}
+          <div>
+            <label className="text-xs font-semibold text-muted uppercase mb-1 block">Descrição</label>
+            <textarea
+              className="w-full min-h-[100px] bg-white/5 rounded-lg p-3 text-sm text-text focus:outline-none focus:ring-1 focus:ring-primary/50 resize-y placeholder:text-muted/30"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={() => handleSave("description", description)}
+              placeholder="Adicione detalhes..."
+            />
+          </div>
+
+          {/* Abas de Ferramentas */}
+          <Tabs defaultValue="checklist" className="w-full">
+            <TabsList className="w-full justify-start bg-transparent border-b border-white/10 rounded-none h-auto p-0 gap-4 mb-4">
+              <TabsTrigger value="checklist" className="border-b-2 border-transparent data-[state=active]:border-primary rounded-none pb-2 bg-transparent">Checklist</TabsTrigger>
+              <TabsTrigger value="ai" className="border-b-2 border-transparent data-[state=active]:border-primary rounded-none pb-2 bg-transparent">IA Plan</TabsTrigger>
+              <TabsTrigger value="comments" className="border-b-2 border-transparent data-[state=active]:border-primary rounded-none pb-2 bg-transparent">Comentários</TabsTrigger>
             </TabsList>
 
-            <TabsContent value={tab} tabValue="checklist">
-              <ChecklistPanel checklistQ={checklistQ} onToggle={onToggle} toggling={toggleItem.isPending} />
+            <TabsContent value="checklist" className="mt-0">
+              <ChecklistPanel workspaceId={workspaceId} task={taskData} />
             </TabsContent>
 
-            <TabsContent value={tab} tabValue="comments">
-              <CommentsPanel commentsQ={commentsQ} createComment={createComment} />
+            <TabsContent value="ai" className="mt-0">
+              {/* Passamos os dados atuais para a IA ter contexto */}
+              <AiPanel 
+                workspaceId={workspaceId} 
+                taskId={taskData.id} 
+                taskTitle={title} 
+                taskDescription={description} 
+              />
             </TabsContent>
 
-            <TabsContent value={tab} tabValue="deps">
-              <DependenciesPanel depsQ={depsQ} />
-            </TabsContent>
-
-            <TabsContent value={tab} tabValue="files">
-              <AttachmentsPanel attachmentsQ={attachmentsQ} />
-            </TabsContent>
-
-            <TabsContent value={tab} tabValue="ai">
-              <AiPanel task={task} aiPlan={aiPlan} />
+            <TabsContent value="comments" className="mt-0">
+              <CommentsPanel workspaceId={workspaceId} taskId={taskData.id} comments={taskData.comments} />
             </TabsContent>
           </Tabs>
+
         </div>
-      )}
-    </Drawer>
+      </DialogContent>
+    </Dialog>
   );
 }
