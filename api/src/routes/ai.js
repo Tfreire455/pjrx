@@ -1,9 +1,9 @@
-import { ok, fail } from "../utils/http.js";
+import { ok, fail } from "../utils/http.js"; // Caminho corrigido
 import { parseBody } from "../utils/validation.js";
 import { z } from "zod";
 import { openai } from "../services/openai.js";
 
-// --- Schemas de Entrada ---
+// Schemas
 const GenerateProjectPlanBody = z.object({
   workspaceId: z.string().min(10),
   projectId: z.string().min(10).optional(),
@@ -19,36 +19,33 @@ const ImplementationPlanBody = z.object({
   context: z.string().optional()
 });
 
-// --- Helper: Verifica acesso ao workspace manualmente ---
+// Helper: Acesso
 async function ensureWorkspaceAccess(app, workspaceId, userId) {
   return app.prisma.workspaceMember.findUnique({
     where: { workspaceId_userId: { workspaceId, userId } }
   });
 }
 
-// --- Helper: Limpa e parseia JSON ---
+// Helper: Parse Seguro
 function cleanAndParse(text) {
   try {
     const clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
     return JSON.parse(clean);
   } catch (e) {
-    console.error("AI JSON Parse Error:", text);
+    console.error("Erro Parse JSON IA:", text);
     return null;
   }
 }
 
-// --- Helper: Salva histórico no banco ---
+// Helper: Persistência (Memória do Plano)
 async function persistAI(app, { workspaceId, userId, kind, title, content, meta }) {
   try {
+    // Salva o insight
     const insight = await app.prisma.aiInsight.create({
-      data: {
-        workspaceId,
-        kind,
-        title,
-        content: content || {}
-      }
+      data: { workspaceId, kind, title, content: content || {} }
     });
-
+    
+    // Registra no chat/log
     await app.prisma.aiMessage.create({
       data: {
         workspaceId,
@@ -57,28 +54,17 @@ async function persistAI(app, { workspaceId, userId, kind, title, content, meta 
         content: JSON.stringify({ kind, insightId: insight.id, meta: meta || null })
       }
     });
-
-    if (content) {
-      await app.prisma.aiSuggestion.create({
-        data: {
-          workspaceId,
-          type: kind === "project_plan" ? "plan" : "implementation",
-          payload: content
-        }
-      });
-    }
     return insight;
   } catch (e) {
-    console.error("Persist Error:", e);
-    return { id: "temp" };
+    console.error("Erro ao persistir IA:", e);
+    return { id: "temp-failure" };
   }
 }
 
 export async function aiRoutes(app) {
-  // 1. Apenas exige que o usuário esteja logado (não checa role aqui ainda)
   app.addHook("preHandler", app.requireAuth);
 
-  // --- Rota: Gerar Plano de Projeto ---
+  // Rota 1: Gerar Plano Completo (Projeto)
   app.post("/ai/generate-project-plan", async (request, reply) => {
     const parsed = parseBody(GenerateProjectPlanBody, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
@@ -86,11 +72,8 @@ export async function aiRoutes(app) {
     const { workspaceId, projectId, projectName, projectDescription, context } = parsed.data;
     const userId = request.user.sub;
 
-    // VERIFICAÇÃO DE SEGURANÇA MANUAL
     const member = await ensureWorkspaceAccess(app, workspaceId, userId);
-    if (!member) {
-      return fail(reply, 403, { message: "Acesso negado ao workspace." });
-    }
+    if (!member) return fail(reply, 403, { message: "Sem acesso ao workspace" });
 
     try {
       const completion = await openai.chat.completions.create({
@@ -98,26 +81,30 @@ export async function aiRoutes(app) {
         messages: [
           {
             role: "system",
-            content: `Você é um Gerente de Projetos Expert. Retorne APENAS um JSON válido.
-            Estrutura Obrigatória:
+            content: `Você é um Gerente de Projetos Senior. Retorne APENAS um JSON válido.
+            Estrutura obrigatória:
             {
-              "risks": [{ "risk": "Titulo", "mitigation": "Ação" }],
-              "nextActions": ["Ação 1", "Ação 2"],
-              "sprintSuggestions": [{ "name": "Sprint 1", "goal": "Objetivo" }]
+              "risks": [
+                { "risk": "Nome curto", "mitigation": "Ação detalhada", "dueInDays": 3, "impact": "High/Medium/Low" }
+              ],
+              "nextActions": [
+                { "title": "Ação prática", "dueInDays": 2, "priority": "high/medium/low" }
+              ],
+              "sprintSuggestions": [
+                { "name": "Sprint 1: [Tema]", "goal": "Objetivo claro", "durationDays": 14 }
+              ]
             }`
           },
           {
             role: "user",
-            content: `Projeto: ${projectName}. Descrição: ${projectDescription || "N/A"}. Context: ${context || ""}`
+            content: `Projeto: ${projectName}. Descrição: ${projectDescription || ""}. Contexto: ${context || ""}`
           }
         ],
         response_format: { type: "json_object" }
       });
 
-      const raw = completion.choices[0].message.content;
-      const json = cleanAndParse(raw);
-
-      if (!json) return fail(reply, 500, { message: "IA retornou dados inválidos", raw });
+      const json = cleanAndParse(completion.choices[0].message.content);
+      if (!json) return fail(reply, 500, { message: "IA não retornou JSON válido." });
 
       const insight = await persistAI(app, {
         workspaceId,
@@ -132,11 +119,11 @@ export async function aiRoutes(app) {
 
     } catch (err) {
       request.log.error(err);
-      return fail(reply, 500, { message: "Erro na OpenAI", error: err.message });
+      return fail(reply, 500, { message: "Erro OpenAI", error: err.message });
     }
   });
 
-  // --- Rota: Gerar Plano de Tarefa (Feature) ---
+  // Rota 2: Gerar Plano de Feature (Tarefa)
   app.post("/ai/feature-implementation-plan", async (request, reply) => {
     const parsed = parseBody(ImplementationPlanBody, request.body);
     if (!parsed.ok) return fail(reply, 400, parsed.error);
@@ -144,9 +131,7 @@ export async function aiRoutes(app) {
     const { workspaceId, projectId, feature, context } = parsed.data;
     const userId = request.user.sub;
 
-    // VERIFICAÇÃO DE SEGURANÇA MANUAL
-    const member = await ensureWorkspaceAccess(app, workspaceId, userId);
-    if (!member) return fail(reply, 403, { message: "Acesso negado." });
+    await ensureWorkspaceAccess(app, workspaceId, userId);
 
     try {
       const completion = await openai.chat.completions.create({
@@ -154,31 +139,21 @@ export async function aiRoutes(app) {
         messages: [
           {
             role: "system",
-            content: `Tech Lead Senior. Retorne JSON válido.
-            {
-              "risks": ["Risco 1"],
-              "steps": ["Passo 1", "Passo 2"],
-              "complexity": "Baixa/Média/Alta"
-            }`
+            content: `Tech Lead. Retorne JSON: { "risks": [], "steps": [], "complexity": "Low/Mid/High" }`
           },
-          {
-            role: "user",
-            content: `Feature: ${feature}. Context: ${context || ""}`
-          }
+          { role: "user", content: `Feature: ${feature}. Contexto: ${context}` }
         ],
         response_format: { type: "json_object" }
       });
 
-      const raw = completion.choices[0].message.content;
-      const json = cleanAndParse(raw);
-
-      if (!json) return fail(reply, 500, { message: "IA inválida", raw });
+      const json = cleanAndParse(completion.choices[0].message.content);
+      if (!json) return fail(reply, 500, { message: "IA inválida" });
 
       const insight = await persistAI(app, {
         workspaceId,
         userId,
         kind: "implementation_plan",
-        title: `Impl: ${feature}`,
+        title: `Feature: ${feature}`,
         content: json,
         meta: { projectId }
       });

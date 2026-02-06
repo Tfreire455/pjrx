@@ -13,9 +13,27 @@ export function useSprints(workspaceId, projectId) {
 export function useCreateSprint(workspaceId) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data) => apiFetch(`/w/${workspaceId}/sprints`, { method: "POST", body: data }),
+    mutationFn: (data) => apiFetch(`/w/${workspaceId}/sprints`, { 
+      method: "POST", 
+      body: { workspaceId, ...data } 
+    }),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["sprints", workspaceId, vars.projectId] });
     },
+  });
+}
+
+// Hook para atualizar Sprint (Status, Datas)
+export function useUpdateSprint(workspaceId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }) => apiFetch(`/w/${workspaceId}/sprints/${id}`, {
+      method: "PATCH",
+      body: data
+    }),
+    onSuccess: (_, vars) => {
+      // Invalida a lista para atualizar a UI
+      qc.invalidateQueries({ queryKey: ["sprints", workspaceId] }); 
+    }
   });
 }
