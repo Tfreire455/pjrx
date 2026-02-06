@@ -6,14 +6,14 @@ export function useCreateTask(workspaceId) {
 
   return useMutation({
     mutationFn: async (data) => {
-      // O backend espera { workspaceId, projectId, title, ... }
-      return apiFetch("/tasks", {
+      // CORREÇÃO: A URL deve incluir /w/${workspaceId}
+      return apiFetch(`/w/${workspaceId}/tasks`, {
         method: "POST",
-        body: { workspaceId, ...data }
+        body: { ...data, workspaceId }
       });
     },
     onSuccess: (_, vars) => {
-      // Atualiza Kanban e Listas
+      // Atualiza as listas imediatamente
       if (vars.projectId) {
         qc.invalidateQueries({ queryKey: ["tasks", "project", workspaceId, vars.projectId] });
       }

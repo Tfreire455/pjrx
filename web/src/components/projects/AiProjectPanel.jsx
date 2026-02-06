@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Sparkles, AlertTriangle, Plus, Calendar, CheckCircle2, ArrowRight } from "lucide-react";
+import { Sparkles, Plus, CheckCircle2, ArrowRight } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import { Button } from "../ui/button";
@@ -7,206 +7,112 @@ import { Card, CardHeader, CardTitle, CardContent } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
 import { Badge } from "../ui/badge";
 import { toast } from "sonner";
-
 import { useCreateTask } from "../../hooks/useCreateTask";
 import { useCreateSprint } from "../../hooks/useSprints";
 
-// Helper de data
-function addDays(date, days) {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
+function addDays(d, days) { const date = new Date(d); date.setDate(date.getDate() + days); return date; }
 
 export function AiProjectPanel({ workspaceId, project }) {
   const [plan, setPlan] = useState(null);
-  const [addedItems, setAddedItems] = useState({});
-
+  const [added, setAdded] = useState({});
   const createTask = useCreateTask(workspaceId);
   const createSprint = useCreateSprint(workspaceId);
 
-  const generatePlan = useMutation({
-    mutationFn: async () => {
-      return apiFetch("/ai/generate-project-plan", {
-        method: "POST",
-        body: {
-          workspaceId,
-          projectId: project.id,
-          projectName: project.name,
-          projectDescription: project.description,
-          context: "Gerar plano executável."
-        }
-      });
-    },
+  const generate = useMutation({
+    mutationFn: () => apiFetch("/ai/generate-project-plan", {
+      method: "POST",
+      body: { workspaceId, projectId: project.id, projectName: project.name, projectDescription: project.description }
+    }),
     onSuccess: (res) => {
-      // Lê o resultado onde quer que ele esteja
-      const payload = res.data || res;
-      if (payload?.result) {
-        setPlan(payload.result);
-        setAddedItems({});
-        toast.success("Plano gerado e registrado!");
-      } else {
-        toast.error("IA retornou vazio.");
-      }
+      const data = res.data?.result || res.result; // Tenta extrair de múltiplos lugares
+      if (data) { setPlan(data); toast.success("Plano gerado!"); } 
+      else toast.error("Erro ao ler resposta da IA");
     },
-    onError: (err) => toast.error("Erro na IA: " + err.message)
+    onError: (e) => toast.error(e.message)
   });
 
-  // Ação: Criar Tarefa (Risco ou Ação)
-  async function handleAddTask(item, type, index) {
-    const key = `${type}-${index}`;
-    if (addedItems[key]) return;
-
-    const dueAt = item.dueInDays ? addDays(new Date(), item.dueInDays).toISOString() : null;
-    const title = type === 'risk' ? `Mitigar: ${item.risk}` : item.title;
-    
+  async function addT(item, type, idx) {
+    if (added[`${type}${idx}`]) return;
     try {
       await createTask.mutateAsync({
         projectId: project.id,
-        title,
-        description: type === 'risk' ? item.mitigation : "Sugestão da IA",
-        status: "todo",
-        priority: item.priority === 'high' || item.impact === 'High' ? 'high' : 'medium',
-        dueAt
+        title: type === 'risk' ? `Risco: ${item.risk}` : item.title || item,
+        description: type === 'risk' ? item.mitigation : "Sugestão IA",
+        dueAt: item.dueInDays ? addDays(new Date(), item.dueInDays).toISOString() : null
       });
-      setAddedItems(prev => ({ ...prev, [key]: true }));
-      toast.success("Adicionado à lista!");
-    } catch (e) {
-      toast.error("Falha ao criar tarefa.");
-    }
+      setAdded(prev => ({ ...prev, [`${type}${idx}`]: true }));
+      toast.success("Adicionado!");
+    } catch (e) { toast.error("Erro ao criar"); }
   }
 
-  // Ação: Criar Sprint
-  async function handleCreateSprint(sprint, index) {
-    const key = `sprint-${index}`;
-    if (addedItems[key]) return;
-
-    const start = new Date();
-    const end = addDays(start, sprint.durationDays || 14);
-
+  async function addS(sprint, idx) {
+    if (added[`sprint${idx}`]) return;
     try {
       await createSprint.mutateAsync({
         projectId: project.id,
         name: sprint.name,
         goal: sprint.goal,
-        startAt: start.toISOString(),
-        endAt: end.toISOString()
+        startAt: new Date().toISOString(),
+        endAt: addDays(new Date(), sprint.durationDays || 14).toISOString()
       });
-      setAddedItems(prev => ({ ...prev, [key]: true }));
+      setAdded(prev => ({ ...prev, [`sprint${idx}`]: true }));
       toast.success("Sprint criada!");
-    } catch (e) {
-      toast.error("Falha ao criar sprint.");
-    }
+    } catch (e) { toast.error("Erro ao criar sprint"); }
   }
 
   return (
-    <div className="space-y-6 pb-10">
-      <Card className="border-primary/20 bg-primary/5">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Sparkles className="text-primary" size={20} />
-            Copiloto de Planejamento
-          </CardTitle>
-        </CardHeader>
+    <div className="space-y-6">
+      <Card className="bg-primary/5 border-primary/20">
+        <CardHeader><CardTitle className="flex gap-2"><Sparkles size={18}/> Copilot</CardTitle></CardHeader>
         <CardContent>
-          <p className="text-sm text-muted mb-4">
-            A IA vai gerar sugestões de <strong>Riscos</strong>, <strong>Ações</strong> e <strong>Sprints</strong>. 
-            Clique nos botões abaixo dos cards para efetivar as sugestões.
-          </p>
-          <Button onClick={() => generatePlan.mutate()} disabled={generatePlan.isPending}>
-            {generatePlan.isPending ? "Gerando..." : "Gerar Plano do Projeto"}
+          <p className="mb-4 text-sm text-muted">A IA vai analisar o projeto <strong>{project.name}</strong>.</p>
+          <Button onClick={() => generate.mutate()} disabled={generate.isPending}>
+            {generate.isPending ? "Gerando..." : "Gerar Plano"}
           </Button>
         </CardContent>
       </Card>
 
-      {generatePlan.isPending && (
-        <div className="space-y-4">
-          <Skeleton className="h-32 w-full" />
-          <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-40 w-full" /><Skeleton className="h-40 w-full" /></div>
-        </div>
-      )}
-
       {plan && (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
-          
-          {/* Sprints */}
+        <div className="grid gap-6 animate-in fade-in slide-in-from-bottom-2">
           {plan.sprintSuggestions && (
-            <Card>
-              <CardHeader><CardTitle className="text-base text-blue-400">Sugestão de Sprints</CardTitle></CardHeader>
-              <CardContent>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {plan.sprintSuggestions.map((s, i) => {
-                    const isAdded = addedItems[`sprint-${i}`];
-                    return (
-                      <div key={i} className="p-3 rounded-lg border border-white/10 bg-white/5 flex flex-col justify-between gap-3">
-                        <div>
-                          <div className="font-bold text-text">{s.name}</div>
-                          <div className="text-xs text-muted mt-1">{s.goal}</div>
-                          <div className="mt-2"><Badge tone="secondary">{s.durationDays} dias</Badge></div>
-                        </div>
-                        <Button size="sm" variant={isAdded ? "ghost" : "secondary"} disabled={isAdded} onClick={() => handleCreateSprint(s, i)}>
-                          {isAdded ? "Criada" : "Criar Sprint"}
-                        </Button>
-                      </div>
-                    );
-                  })}
+            <Card><CardHeader><CardTitle>Sprints</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2">
+              {plan.sprintSuggestions.map((s, i) => (
+                <div key={i} className="p-3 border border-white/10 rounded flex flex-col gap-2">
+                  <div className="font-bold">{s.name}</div>
+                  <div className="text-xs text-muted">{s.goal}</div>
+                  <Button size="sm" variant="secondary" onClick={() => addS(s, i)} disabled={added[`sprint${i}`]}>
+                    {added[`sprint${i}`] ? "Criada" : "Criar Sprint"}
+                  </Button>
                 </div>
-              </CardContent>
-            </Card>
+              ))}
+            </CardContent></Card>
           )}
-
+          
           <div className="grid gap-6 md:grid-cols-2">
-            {/* Riscos */}
-            <Card>
-              <CardHeader><CardTitle className="text-base text-red-400">Riscos (Gerar Tarefas)</CardTitle></CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {plan.risks?.map((r, i) => {
-                    const isAdded = addedItems[`risk-${i}`];
-                    return (
-                      <div key={i} className="p-3 rounded-lg border border-white/10 bg-white/5">
-                        <div className="flex justify-between">
-                          <span className="font-semibold text-text text-sm">{r.risk}</span>
-                          <Badge tone="danger">{r.impact || "High"}</Badge>
-                        </div>
-                        <p className="text-xs text-muted mt-1">{r.mitigation}</p>
-                        <div className="mt-3 flex justify-between items-center">
-                          <span className="text-[10px] text-muted">Prazo: {r.dueInDays} dias</span>
-                          <Button size="sm" variant="ghost" disabled={isAdded} onClick={() => handleAddTask(r, 'risk', i)}>
-                            {isAdded ? <CheckCircle2 size={14}/> : <Plus size={14}/>}
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
+            <Card><CardHeader><CardTitle>Riscos</CardTitle></CardHeader><CardContent className="space-y-2">
+              {plan.risks?.map((r, i) => (
+                <div key={i} className="flex justify-between items-center p-2 border-b border-white/5">
+                  <div className="text-sm">
+                    <div className="font-semibold text-red-400">{r.risk}</div>
+                    <div className="text-xs text-muted">{r.mitigation}</div>
+                  </div>
+                  <Button size="icon" variant="ghost" onClick={() => addT(r, 'risk', i)} disabled={added[`risk${i}`]}>
+                    {added[`risk${i}`] ? <CheckCircle2 size={16}/> : <Plus size={16}/>}
+                  </Button>
                 </div>
-              </CardContent>
-            </Card>
+              ))}
+            </CardContent></Card>
 
-            {/* Ações */}
-            <Card>
-              <CardHeader><CardTitle className="text-base text-green-400">Próximos Passos</CardTitle></CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {plan.nextActions?.map((a, i) => {
-                    const title = a.title || a; // Compatibilidade
-                    const due = a.dueInDays || 2;
-                    const isAdded = addedItems[`action-${i}`];
-                    return (
-                      <div key={i} className="p-3 rounded-lg border border-white/10 bg-white/5 flex items-center justify-between">
-                        <div>
-                          <div className="text-sm font-medium text-text">{title}</div>
-                          <div className="text-[10px] text-muted">Prazo sugerido: {due} dias</div>
-                        </div>
-                        <Button size="sm" variant="secondary" disabled={isAdded} onClick={() => handleAddTask({ title, dueInDays: due }, 'action', i)}>
-                          {isAdded ? "Adicionado" : "Adicionar"}
-                        </Button>
-                      </div>
-                    );
-                  })}
+            <Card><CardHeader><CardTitle>Ações</CardTitle></CardHeader><CardContent className="space-y-2">
+              {plan.nextActions?.map((a, i) => (
+                <div key={i} className="flex justify-between items-center p-2 border-b border-white/5">
+                  <span className="text-sm">{a.title || a}</span>
+                  <Button size="icon" variant="ghost" onClick={() => addT(a, 'action', i)} disabled={added[`action${i}`]}>
+                    {added[`action${i}`] ? <CheckCircle2 size={16}/> : <Plus size={16}/>}
+                  </Button>
                 </div>
-              </CardContent>
-            </Card>
+              ))}
+            </CardContent></Card>
           </div>
         </div>
       )}

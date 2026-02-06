@@ -5,9 +5,8 @@ export function useProjectTasks(workspaceId, projectId) {
   return useQuery({
     queryKey: ["tasks", "project", workspaceId, projectId],
     enabled: Boolean(workspaceId && projectId),
-    // Rota ajustada
-    queryFn: () =>
-      apiFetch(`/w/${workspaceId}/tasks?projectId=${encodeURIComponent(projectId)}`),
-    staleTime: 10_000
+    // CORREÇÃO: Rota correta para buscar tarefas do projeto
+    queryFn: () => apiFetch(`/w/${workspaceId}/tasks?projectId=${projectId}`),
+    staleTime: 5000 // Reduzido para atualizar mais rápido
   });
 }

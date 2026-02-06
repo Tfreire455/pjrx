@@ -17,13 +17,14 @@ import { KanbanBoard } from "../components/kanban/KanbanBoard";
 import { SprintBoard } from "../components/sprints/SprintBoard";
 import { AiProjectPanel } from "../components/projects/AiProjectPanel";
 
-function getProject(res) {
-  return res?.data?.project || res?.project || res?.data || null;
-}
-function getTasks(res) {
-  if (res?.data?.tasks) return res.data.tasks;
-  if (res?.tasks) return res.tasks;
-  return Array.isArray(res) ? res : [];
+// Função Helper Robusta
+function extractTasks(res) {
+  if (!res) return [];
+  if (res.data && Array.isArray(res.data.tasks)) return res.data.tasks;
+  if (res.tasks && Array.isArray(res.tasks)) return res.tasks;
+  if (Array.isArray(res)) return res;
+  if (res.data && Array.isArray(res.data)) return res.data;
+  return [];
 }
 
 export function Project() {
@@ -36,8 +37,8 @@ export function Project() {
   const taskQ = useTask(workspaceId, taskId);
   const updateStatus = useUpdateTaskStatus(workspaceId, projectId);
 
-  const project = useMemo(() => getProject(projectQ.data), [projectQ.data]);
-  const tasks = useMemo(() => getTasks(tasksQ.data), [tasksQ.data]);
+  const project = projectQ.data?.data?.project || projectQ.data?.project || null;
+  const tasks = useMemo(() => extractTasks(tasksQ.data), [tasksQ.data]);
 
   function openTask(tId) { nav(`/app/w/${workspaceId}/p/${projectId}/t/${tId}`); }
   function closeDrawer() { nav(`/app/w/${workspaceId}/p/${projectId}`, { replace: true }); }
@@ -45,7 +46,7 @@ export function Project() {
 
   return (
     <div className="space-y-4">
-      {projectQ.isLoading ? <Skeleton className="h-10 w-1/3"/> : <ProjectHeader project={project} />}
+      {projectQ.isLoading ? <Skeleton className="h-12 w-full"/> : <ProjectHeader project={project} />}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
@@ -59,19 +60,23 @@ export function Project() {
           <motion.div key={tab} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} className="mt-4">
             
             <TabsContent value="kanban">
-              <Card className="border-none bg-transparent shadow-none p-0"><CardContent className="p-0">
-                <KanbanBoard tasks={tasks} onOpenTask={openTask} onMoveTask={moveTask} />
-              </CardContent></Card>
+              <div className="h-[calc(100vh-280px)] min-h-[500px]">
+                {tasksQ.isLoading ? <Skeleton className="h-full w-full"/> : 
+                 <KanbanBoard tasks={tasks} onOpenTask={openTask} onMoveTask={moveTask} />}
+              </div>
             </TabsContent>
 
             <TabsContent value="list">
-              <Card><CardHeader><CardTitle>Tarefas</CardTitle></CardHeader><CardContent className="space-y-2">
-                {tasks.map(t => (
-                  <div key={t.id} onClick={() => openTask(t.id)} className="p-3 border border-white/10 rounded-lg hover:bg-white/5 cursor-pointer flex justify-between">
-                    <span>{t.title}</span><Badge>{t.status}</Badge>
-                  </div>
-                ))}
-              </CardContent></Card>
+              <Card>
+                <CardHeader><CardTitle>Lista de Tarefas</CardTitle></CardHeader>
+                <CardContent className="space-y-2">
+                  {tasks.length > 0 ? tasks.map(t => (
+                    <div key={t.id} onClick={() => openTask(t.id)} className="p-3 border border-white/10 rounded-lg hover:bg-white/5 cursor-pointer flex justify-between">
+                      <span>{t.title}</span><Badge>{t.status}</Badge>
+                    </div>
+                  )) : <div className="text-muted text-sm">Sem tarefas.</div>}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             <TabsContent value="sprints">
@@ -79,7 +84,7 @@ export function Project() {
             </TabsContent>
 
             <TabsContent value="ai">
-              {project ? <AiProjectPanel workspaceId={workspaceId} project={project} /> : <Skeleton className="h-32"/>}
+              {project ? <AiProjectPanel workspaceId={workspaceId} project={project} /> : <Skeleton className="h-48"/>}
             </TabsContent>
 
           </motion.div>
